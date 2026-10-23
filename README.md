@@ -82,7 +82,7 @@ dsh --profile web --patch ./scratch.cordis.yml
 - 挂载 `agent/pre-step` 瀑布流（dsh 的**权威消息准入接缝**）：每一步开始前拿到默认裁决 `{ kind: 'enter', messages }`，把批次内的**纯文本用户消息**用一次 LLM 调用重写后，以全新 `UserMessage` 放行。
 - **跳过规则**：斜杠命令（`/plan` 等）不改写；含文件/图片附件的消息不改写；过短、过长输入不改写；非聊天框来源的内部 user 消息（goal 轮次、会话引用、notice 等）不改写。
 - **fail-open**：增强失败 / 超时 / 无可用路由时，原始消息原样放行，绝不阻塞对话。
-- **输入框开关**：web 端在输入框左侧注册一个 Sparkle 图标（`conversation.input.left` slot），点一下就能临时关掉 / 打开自动增强，图标变暗表示已关闭。开关状态存在服务端进程内，通过 `/api/prompt-enhancer/state` 读写；重启后回到 profile 配置的 `enabled` 值。CLI / TUI 等没有 web 客户端的宿主不加载这部分，只保留自动增强。
+- **输入框增强按钮**：web 端在输入框工具栏左侧注册一个 Sparkle 图标（`conversation.input.left` slot，对齐 WorkBuddy 的「增强提示词」图标）。点击后把当前草稿发给 `/api/prompt-enhancer/rewrite`，用改写结果替换输入框内容；草稿为空或正在请求时按钮禁用。CLI / TUI 等没有 web 客户端的宿主不加载这部分，只保留发送前自动增强。
 - 同时注册 `enhance_prompt` 工具：模型自己也能调用（例如在重跑一个模糊需求前先改写它）。
 
 ## 注意事项
@@ -90,7 +90,7 @@ dsh --profile web --patch ./scratch.cordis.yml
 - dsh 目前处于 **developer preview**，插件 API 可能随版本变动；本插件已针对 `0.2.x` 的事件与类型核对，升级后如失效应先复查 `agent/pre-step` 签名。
 - 每条消息发送前会**多一次模型调用**（增强调用本身消耗少量 token）；对延迟敏感时请给 `model` 配置快模型。
 - 增强后的提示词会进入会话日志（与 WorkBuddy 行为一致）；想回看原始输入可在插件日志里找到 `enhanced X -> Y chars` 记录。
-- 输入框图标是**运行时开关**，不会写回 profile 配置；要用配置永久关闭，请在 profile 里设 `enabled: false`（此时图标变为禁用态）。
+- 输入框的增强按钮只在 web 客户端出现；要在配置层面彻底关闭自动增强，请在 profile 里设 `enabled: false`（此时按钮也不会注册）。
 
 ## 发布到 GitHub（维护者）
 

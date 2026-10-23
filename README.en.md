@@ -52,7 +52,7 @@ On success, the startup log prints `[dsh-prompt-enhancer] loaded (mode=auto, ...
 - Hooks the `agent/pre-step` waterfall — dsh's **authoritative message-admission seam**. When the default decision is `{ kind: 'enter', messages }`, plain-text user messages in the batch are rewritten via one LLM call and re-admitted as fresh `UserMessage`s.
 - **Skipped**: slash commands (`/plan`, …), messages with file/image attachments, inputs shorter/longer than the configured bounds, and internal user-role messages that do not come from the chat box (goal rounds, session references, notices).
 - **Fail-open**: on enhancement failure, timeout, or missing model route, the original message passes through untouched.
-- **Composer toggle**: on web, a Sparkle icon is registered at `conversation.input.left`; one click temporarily turns auto-enhancement off or on (the icon dims when off). The state lives in the server process and is read/written through `/api/prompt-enhancer/state`; it resets to the profile's `enabled` value on restart. Hosts without a web client (CLI/TUI) skip this part.
+- **Composer enhance button**: on web, a Sparkle icon is registered at `conversation.input.left` (the same icon as WorkBuddy's prompt enhancer). Clicking sends the current draft to `/api/prompt-enhancer/rewrite` and replaces the composer text with the rewritten prompt; the button is disabled while the draft is empty or a request is in flight. Hosts without a web client (CLI/TUI) skip this part.
 - Also registers an `enhance_prompt` tool the model can call itself.
 
 ## Notes
