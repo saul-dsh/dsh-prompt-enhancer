@@ -16,7 +16,7 @@
 | 这个 bug 修一下 | 定位并修复当前仓库中的构建失败：先运行 `pnpm run build` 复现报错，给出根因分析（引用具体文件与行号），完成最小修复后重新运行构建验证通过，并总结改动点。 |
 | 做个网站 | 用单个 HTML 文件制作一个「个人书签导航页」：顶部搜索过滤，卡片式分组展示书签（名称、URL、备注），支持增删改（localStorage 持久化），浅色主题、移动端适配，无外部依赖。 |
 
-FF多对比见 [examples/before-after.md](examples/before-after.md)。
+更多对比见 [examples/before-after.md](examples/before-after.md)。
 
 ## 安装
 
