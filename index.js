@@ -111,7 +111,8 @@ function buildMetaPrompt(raw, config) {
   if (config.styleHint && config.styleHint.trim().length > 0) {
     lines.push('', `Additional style requirements from the host config: ${config.styleHint.trim()}`)
   }
-  lines.push('', 'Raw input:', raw)
+  // 用标签包住原文：即使原文本身长得像指令，也不会和改写规则混在一起。
+  lines.push('', 'Raw input:', '<original_prompt>', raw, '</original_prompt>')
   return lines.join('\n')
 }
 
