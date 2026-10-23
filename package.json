@@ -4,8 +4,13 @@
   "description": "Chat-box prompt auto-enhancement for DeepSeek Harness (dsh): rewrites your rough input into a clear, self-contained prompt before it reaches the model. Works like the prompt enhancer in WorkBuddy.",
   "type": "module",
   "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js"
+  },
   "files": [
     "index.js",
+    "client.js",
     "cordis.patch.yml",
     "README.md",
     "README.en.md"
@@ -22,7 +27,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/yehuiyou155-creator/dsh-prompt-enhancer.git"
+    "url": "git+https://github.com/saul-dsh/dsh-prompt-enhancer.git"
   },
   "engines": {
     "node": ">=18"
@@ -36,6 +41,9 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web"
     }
   }
 }

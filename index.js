@@ -192,6 +192,13 @@ export function apply(ctx, config) {
   /** 最近一次见到的会话路由，供 enhance_prompt 工具在没有显式配置时复用。 */
   let lastRoute = null
 
+  /**
+   * 运行时开关：由 web 输入框的图标按钮写入，只影响本次进程。
+   * 重启后回到 profile 配置里的 enabled 值（配置为 false 时不可被按钮打开）。
+   */
+  let runtimeEnabled = true
+  const isEnabled = () => config.enabled && runtimeEnabled
+
   function resolveRoute(agent) {
     const provider = config.provider || agent?.options?.provider
     const model = config.model || agent?.options?.model
@@ -238,7 +245,8 @@ export function apply(ctx, config) {
       if (decision.kind !== 'enter') return decision
       const route = resolveRoute(agent)
       if (route) lastRoute = route
-      if (config.mode !== 'auto') return decision
+      // 输入框的开关图标可以临时关掉自动增强，此时直接放行。
+      if (!isEnabled() || config.mode !== 'auto') return decision
       const messages = await enhanceBatch(decision.messages, agent, signal)
       if (messages === decision.messages) return decision
       // spread 保留未来新增的 decision 字段
@@ -271,6 +279,56 @@ export function apply(ctx, config) {
   } else {
     log('log', 'loaded but disabled by config')
   }
+
+  /* ------------------------------------------------------------------ */
+  /* web 端开关端点（只在有 webServer 的宿主里注册）                       */
+  /* ------------------------------------------------------------------ */
+
+  const statePayload = () => ({
+    enabled: isEnabled(),
+    configEnabled: config.enabled === true,
+    mode: config.mode,
+  })
+
+  // 可选注入：CLI / TUI 等没有 webServer 的宿主照常加载，只是没有图标开关。
+  ctx.inject(['webServer'], (webCtx) => {
+    webCtx.effect(() => webCtx.webServer.register({
+      kind: 'exact',
+      path: '/api/prompt-enhancer/state',
+      handler: async (req, res) => {
+        const send = (status, body) => {
+          res.statusCode = status
+          res.setHeader('content-type', 'application/json')
+          res.end(JSON.stringify(body))
+        }
+        if (req.method === 'GET') {
+          send(200, statePayload())
+          return
+        }
+        if (req.method !== 'POST') {
+          res.setHeader('allow', 'GET, POST')
+          send(405, { error: 'method-not-allowed' })
+          return
+        }
+        let raw = ''
+        for await (const chunk of req) raw += chunk
+        let body
+        try {
+          body = JSON.parse(raw)
+        } catch {
+          send(400, { error: 'invalid-json' })
+          return
+        }
+        if (typeof body?.enabled !== 'boolean') {
+          send(400, { error: 'enabled must be a boolean' })
+          return
+        }
+        runtimeEnabled = body.enabled
+        log('log', `runtime toggle -> ${runtimeEnabled ? 'on' : 'off'}`)
+        send(200, statePayload())
+      },
+    }), 'prompt-enhancer: /api/prompt-enhancer/state')
+  })
 }
 
 export default { name, inject, Config, apply }

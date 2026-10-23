@@ -22,7 +22,7 @@ your input → [dsh-prompt-enhancer rewrite] → enhanced prompt enters the sess
 dsh plugin --profile web add /path/to/dsh-prompt-enhancer
 
 # From GitHub
-dsh plugin --profile web add https://github.com/yehuiyou155-creator/dsh-prompt-enhancer
+dsh plugin --profile web add https://github.com/saul-dsh/dsh-prompt-enhancer
 
 # Or mount temporarily without touching your profile
 dsh --profile web --patch ./scratch.cordis.yml
@@ -52,6 +52,7 @@ On success, the startup log prints `[dsh-prompt-enhancer] loaded (mode=auto, ...
 - Hooks the `agent/pre-step` waterfall — dsh's **authoritative message-admission seam**. When the default decision is `{ kind: 'enter', messages }`, plain-text user messages in the batch are rewritten via one LLM call and re-admitted as fresh `UserMessage`s.
 - **Skipped**: slash commands (`/plan`, …), messages with file/image attachments, inputs shorter/longer than the configured bounds, and internal user-role messages that do not come from the chat box (goal rounds, session references, notices).
 - **Fail-open**: on enhancement failure, timeout, or missing model route, the original message passes through untouched.
+- **Composer toggle**: on web, a Sparkle icon is registered at `conversation.input.left`; one click temporarily turns auto-enhancement off or on (the icon dims when off). The state lives in the server process and is read/written through `/api/prompt-enhancer/state`; it resets to the profile's `enabled` value on restart. Hosts without a web client (CLI/TUI) skip this part.
 - Also registers an `enhance_prompt` tool the model can call itself.
 
 ## Notes
