@@ -37,7 +37,7 @@ export const Config = Schema.object({
   /** 留空则跟随当前会话 Agent 的 provider 路由。 */
   provider: Schema.string().description('增强调用使用的 provider（留空跟随会话）'),
   /** 留空则跟随当前会话 Agent 的 model。建议配一个快模型降低延迟。 */
-  model: Schema.string().description('增强调用使用的 model（留空跟随会话，建议快模型）').description('增强调用使用的模型（留空跟随会话，建议快模型）'),
+  model: Schema.string().description('增强调用使用的模型（留空跟随会话，建议快模型）'),
   /** 单次增强调用的超时时间，超时即放弃增强、原样放行。 */
   timeoutMs: Schema.number().default(20000).description('增强调用超时（毫秒）'),
   /** 短于该长度（字符）的输入不做增强（如「继续」「ok」）。 */
@@ -269,8 +269,7 @@ export function apply(ctx, config) {
 
     log('log', `loaded (mode=${config.mode}, timeout=${config.timeoutMs}ms)`)
   } else {
-    console.log('[dsh-prompt-enhancer] loaded but disabled by config')
-    console.log('[dsh-prompt-enhancer] loaded but disabled by config')
+    log('log', 'loaded but disabled by config')
   }
 }
 
