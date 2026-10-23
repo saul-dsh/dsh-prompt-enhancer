@@ -31,7 +31,7 @@ dsh --profile web
 ### 方式二：从 GitHub 安装
 
 ```sh
-dsh plugin --profile web add https://github.com/YOUR_GITHUB_USERNAME/dsh-prompt-enhancer
+dsh plugin --profile web add https://github.com/yehuiyou155-creator/dsh-prompt-enhancer
 ```
 
 ### 方式三：不改 profile，先用 `--patch` 临时挂载试用
@@ -80,7 +80,7 @@ dsh --profile web --patch ./scratch.cordis.yml
 ## 工作原理
 
 - 挂载 `agent/pre-step` 瀑布流（dsh 的**权威消息准入接缝**）：每一步开始前拿到默认裁决 `{ kind: 'enter', messages }`，把批次内的**纯文本用户消息**用一次 LLM 调用重写后，以全新 `UserMessage` 放行。
-- **跳过规则**：斜杠命令（`/plan` 等）不改写；含文件/图片附件的消息不改写；过短、过长输入不改写。
+- **跳过规则**：斜杠命令（`/plan` 等）不改写；含文件/图片附件的消息不改写；过短、过长输入不改写；非聊天框来源的内部 user 消息（goal 轮次、会话引用、notice 等）不改写。
 - **fail-open**：增强失败 / 超时 / 无可用路由时，原始消息原样放行，绝不阻塞对话。
 - 同时注册 `enhance_prompt` 工具：模型自己也能调用（例如在重跑一个模糊需求前先改写它）。
 

@@ -22,7 +22,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/YOUR_GITHUB_USERNAME/dsh-prompt-enhancer.git"
+    "url": "git+https://github.com/yehuiyou155-creator/dsh-prompt-enhancer.git"
   },
   "engines": {
     "node": ">=18"

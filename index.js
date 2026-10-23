@@ -82,9 +82,13 @@ function buildMetaPrompt(raw, config) {
 /* 工具函数                                                            */
 /* ------------------------------------------------------------------ */
 
-/** 提取消息里的纯文本内容；非「单个文本块」的消息返回 null（不处理）。 */
+/** 提取消息里的纯文本内容；非「聊天框用户消息 / 单个文本块」返回 null（不处理）。 */
 function singleTextOf(message) {
-  if (!message || message.role !== 'user' || !Array.isArray(message.content)) return null
+  if (!message || message.role !== 'user') return null
+  // dsh 内部还会产生 role 为 user、source.kind 为 goal / session-reference /
+  // notice 等的消息；它们不是用户在对话框里输入的内容，绝不能改写。
+  if (message.source?.kind !== 'user') return null
+  if (!Array.isArray(message.content)) return null
   if (message.content.length !== 1) return null
   const block = message.content[0]
   return block && block.type === 'text' && typeof block.text === 'string' ? block.text : null
@@ -117,17 +121,34 @@ function cleanModelOutput(text) {
 }
 
 /** 调一次 LLM 做改写；任何失败都抛错，由上层兜底放行。 */
-async function rewriteWithLlm(ctx, route, raw, config) {
-  const stream = ctx.llm.stream({
+async function rewriteWithLlm(ctx, route, raw, config, outerSignal) {
+  // 超时与外部取消（用户中断 pre-step）收敛到同一个内部 signal，
+  // 底层流会被及时中断，不会在后台继续烧 token。
+  const controller = new AbortController()
+  const forwardAbort = () => controller.abort(outerSignal.reason)
+  if (outerSignal?.aborted) forwardAbort()
+  else outerSignal?.addEventListener('abort', forwardAbort, { once: true })
+  const timer = setTimeout(
+    () => controller.abort(new Error('prompt-enhancer timeout')),
+    config.timeoutMs,
+  )
+
+  const aborted = new Promise((_, reject) => {
+    const fail = () => reject(controller.signal.reason ?? new Error('prompt-enhancer aborted'))
+    // 外层 signal 可能一开始就已 abort：先检查，再挂监听。
+    if (controller.signal.aborted) fail()
+    else controller.signal.addEventListener('abort', fail, { once: true })
+  })
+  // 成功路径下 aborted 不会被消费，挂空 catch 避免 unhandled rejection。
+  void aborted.catch(() => {})
+
+  const iterator = ctx.llm.stream({
     provider: route.provider,
     model: route.model,
     messages: [{ role: 'user', content: [{ type: 'text', text: buildMetaPrompt(raw, config) }] }],
     maxTokens: 2048,
-  })
-  const iterator = stream[Symbol.asyncIterator]()
-  const deadline = new Promise((_, reject) => {
-    setTimeout(() => reject(new Error('prompt-enhancer timeout')), config.timeoutMs)
-  })
+    signal: controller.signal,
+  })[Symbol.asyncIterator]()
 
   async function collect() {
     let text = ''
@@ -142,17 +163,23 @@ async function rewriteWithLlm(ctx, route, raw, config) {
     return text
   }
 
-  let collected
   try {
-    collected = await Promise.race([collect(), deadline])
+    const collected = await Promise.race([collect(), aborted])
+    const cleaned = cleanModelOutput(collected)
+    if (!cleaned) throw new Error('prompt-enhancer got empty output')
+    return cleaned
   } catch (err) {
-    // 中断底层流，避免超时后还在后台烧 token
-    try { await iterator.return?.() } catch { /* ignore */ }
+    // 中断底层流，避免失败后还在后台烧 token。
+    // 不 await：底层若卡死，等待 return() 会拖住 fail-open。
+    try {
+      const closing = iterator.return?.()
+      if (closing && typeof closing.catch === 'function') closing.catch(() => {})
+    } catch { /* ignore */ }
     throw err
+  } finally {
+    clearTimeout(timer)
+    outerSignal?.removeEventListener('abort', forwardAbort)
   }
-  const cleaned = cleanModelOutput(collected)
-  if (!cleaned) throw new Error('prompt-enhancer got empty output')
-  return cleaned
 }
 
 /* ------------------------------------------------------------------ */
@@ -172,12 +199,12 @@ export function apply(ctx, config) {
   }
 
   /** 对单条消息做增强；不需要增强时原样返回同一个对象。 */
-  async function enhanceOne(message, agent) {
+  async function enhanceOne(message, agent, signal) {
     const raw = singleTextOf(message)
     if (raw === null || shouldSkip(raw, config)) return message
     const route = resolveRoute(agent) ?? lastRoute
     if (!route) return message
-    const enhanced = await rewriteWithLlm(ctx, route, raw.trim(), config)
+    const enhanced = await rewriteWithLlm(ctx, route, raw.trim(), config, signal)
     log('log', `enhanced ${raw.trim().length} -> ${enhanced.length} chars`)
     // 用官方工厂重建消息：获得全新稳定 id，source 沿用原消息
     return createUserMessage({
@@ -187,13 +214,13 @@ export function apply(ctx, config) {
   }
 
   /** 批量增强；没有任何改动时原样返回原数组。 */
-  async function enhanceBatch(messages, agent) {
+  async function enhanceBatch(messages, agent, signal) {
     const out = []
     let changed = false
     for (const message of messages) {
       let next = message
       try {
-        next = await enhanceOne(message, agent)
+        next = await enhanceOne(message, agent, signal)
       } catch (err) {
         // fail-open：增强失败绝不阻塞对话
         log('error', `enhance failed, pass through original: ${err?.message ?? err}`)
@@ -206,42 +233,44 @@ export function apply(ctx, config) {
   }
 
   if (config.enabled) {
-    ctx.on('agent/pre-step', async ({ agent }, next) => {
+    ctx.on('agent/pre-step', async ({ agent, signal }, next) => {
       const decision = await next()
       if (decision.kind !== 'enter') return decision
       const route = resolveRoute(agent)
       if (route) lastRoute = route
       if (config.mode !== 'auto') return decision
-      const messages = await enhanceBatch(decision.messages, agent)
+      const messages = await enhanceBatch(decision.messages, agent, signal)
       if (messages === decision.messages) return decision
-      return { kind: 'enter', messages, startsRequestSeries: decision.startsRequestSeries }
+      // spread 保留未来新增的 decision 字段
+      return { ...decision, messages }
     })
+
+    // 注册模型可调用的工具：agent 自己也能主动增强某段提示词
+    ctx.tools.register(defineTool({
+      name: 'enhance_prompt',
+      description: [
+        'Rewrite a rough user prompt into a clear, specific, self-contained prompt before using it.',
+        'Use it when the user asks to improve/expand their prompt, or before re-running a vague earlier request.',
+      ].join(' '),
+      parameters: {
+        prompt: { type: 'string', required: true, description: 'The raw prompt text to enhance' },
+      },
+      output: {
+        schema: { type: 'string' },
+        render: (_args, value) => [{ type: 'text', text: value }],
+      },
+      async execute(args, exec) {
+        const route = resolveRoute(null) ?? lastRoute
+        if (!route) throw new Error('No model route available: set provider/model in the plugin config.')
+        const enhanced = await rewriteWithLlm(ctx, route, String(args.prompt ?? '').trim(), config, exec?.signal)
+        return enhanced
+      },
+    }))
+
     log('log', `loaded (mode=${config.mode}, timeout=${config.timeoutMs}ms)`)
   } else {
     log('log', 'loaded but disabled by config')
   }
-
-  // 注册模型可调用的工具：agent 自己也能主动增强某段提示词
-  ctx.tools.register(defineTool({
-    name: 'enhance_prompt',
-    description: [
-      'Rewrite a rough user prompt into a clear, specific, self-contained prompt before using it.',
-      'Use it when the user asks to improve/expand their prompt, or before re-running a vague earlier request.',
-    ].join(' '),
-    parameters: {
-      prompt: { type: 'string', required: true, description: 'The raw prompt text to enhance' },
-    },
-    output: {
-      schema: { type: 'string' },
-      render: (_args, value) => [{ type: 'text', text: value }],
-    },
-    async execute(args) {
-      const route = resolveRoute(null) ?? lastRoute
-      if (!route) throw new Error('No model route available: set provider/model in the plugin config.')
-      const enhanced = await rewriteWithLlm(ctx, route, String(args.prompt ?? '').trim(), config)
-      return enhanced
-    },
-  }))
 }
 
 export default { name, inject, Config, apply }

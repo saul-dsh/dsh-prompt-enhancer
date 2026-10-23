@@ -22,7 +22,7 @@ your input → [dsh-prompt-enhancer rewrite] → enhanced prompt enters the sess
 dsh plugin --profile web add /path/to/dsh-prompt-enhancer
 
 # From GitHub
-dsh plugin --profile web add https://github.com/YOUR_GITHUB_USERNAME/dsh-prompt-enhancer
+dsh plugin --profile web add https://github.com/yehuiyou155-creator/dsh-prompt-enhancer
 
 # Or mount temporarily without touching your profile
 dsh --profile web --patch ./scratch.cordis.yml
@@ -50,7 +50,7 @@ On success, the startup log prints `[dsh-prompt-enhancer] loaded (mode=auto, ...
 ## How it works
 
 - Hooks the `agent/pre-step` waterfall — dsh's **authoritative message-admission seam**. When the default decision is `{ kind: 'enter', messages }`, plain-text user messages in the batch are rewritten via one LLM call and re-admitted as fresh `UserMessage`s.
-- **Skipped**: slash commands (`/plan`, …), messages with file/image attachments, and inputs shorter/longer than the configured bounds.
+- **Skipped**: slash commands (`/plan`, …), messages with file/image attachments, inputs shorter/longer than the configured bounds, and internal user-role messages that do not come from the chat box (goal rounds, session references, notices).
 - **Fail-open**: on enhancement failure, timeout, or missing model route, the original message passes through untouched.
 - Also registers an `enhance_prompt` tool the model can call itself.
 
