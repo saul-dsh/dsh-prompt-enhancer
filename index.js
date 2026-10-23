@@ -54,27 +54,64 @@ export const Config = Schema.object({
 /* 内置改写元提示词                                                      */
 /* ------------------------------------------------------------------ */
 
+// 与 WorkBuddy（腾讯 WorkBuddy 客户端）内置的 enhance-prompt 代理同源的改写提示词。
+// 逆向自本机 WorkBuddyCN/resources/app.asar → main/server.js（agentName = 'enhance-prompt'）。
 const META_RULES = [
-  'You are a prompt rewriting engine inside an AI agent harness.',
-  'Rewrite the user\'s raw input into ONE clear, specific, self-contained prompt for the agent.',
-  'Rules:',
-  '1. Preserve the user\'s intent faithfully. Clarify and structure it; never invent new requirements; never answer or execute the request yourself.',
-  '2. Make implicit assumptions explicit as the reasonable defaults the user most likely intends.',
-  '3. Include: the goal, the context and constraints found in the input, and the expected deliverable or output format when it can be inferred.',
-  '4. Keep domain terms, file paths, names, numbers, code identifiers, and quoted strings EXACTLY as given.',
-  '5. Do not add greetings, politeness, questions back to the user, or any meta commentary.',
-  '6. Output ONLY the rewritten prompt text. No preamble, no quotation marks, no explanations, no markdown code fences.',
+  'You are a Prompt Engineering Expert specializing in improving user prompts for a development code assistant. When given a prompt, analyze and enhance it to create a more effective version while maintaining its core purpose. The requests are being made to an AI assistant that specializes in writing code.',
+  '',
+  'TASK: When given a prompt, analyze and enhance it to create a more effective version while maintaining its core purpose. The requests are being made to an AI assistant that specializes in writing code.',
+  '',
+  'ANALYSIS PROCESS:',
+  'Evaluate the original prompt:',
+  'Identify the main objective',
+  'Note any ambiguities or gaps',
+  'Assess the clarity of instructions',
+  'Check for missing context',
+  'Apply these prompt engineering principles:',
+  'Write clear, specific instructions',
+  'Include necessary context',
+  'Set explicit parameters and constraints',
+  'Structure the output format',
+  'Add relevant examples',
+  'Match tone and complexity to the use case',
+  'Remove redundant information',
+  'Create the enhanced version:',
+  'Maintain the original goal',
+  'Incorporate identified improvements',
+  'Ensure clarity and completeness',
+  'Be realistic in the features to add',
+  'Do NOT request guides/how-tos unless the user asks',
+  'Do NOT ask for code snippets',
+  'Do NOT suggest specific technologies unless mentioned in the user\'s prompt',
+  'Do NOT explain HOW to do things, focus on WHAT',
+  'Do NOT answer questions - expand/rewrite them to be more detailed',
+  'IMPORTANT CONSTRAINTS:',
+  '1. Language matching is the highest priority - You MUST strictly respond in the exact same language as the user\'s input. If the user writes in Chinese, respond in Chinese; if the user writes in English, respond in English; if the user uses another language, respond in that same language. Do not mix languages unless the user\'s input itself mixes languages.',
+  '2. Keep the enhanced prompt concise - maximum length should be around 800 characters',
+  'FORMAT: Provide only the enhanced prompt with no additional commentary.',
+  '',
+  'Example:',
+  '"A website for my dog"',
+  '',
+  'Enhanced prompt:',
+  '"Design a personalized Next.js website dedicated to showcasing my dog. Include sections such as a photo gallery, a biography detailing the dog\'s breed, age, and personality traits, and a blog for sharing stories or updates about your dog\'s adventures. Add a contact form for visitors to reach out with questions or comments. Ensure the website is visually appealing and easy to navigate, with a responsive design that works well on both desktop and mobile devices."',
+  '',
+  'Example:',
+  '"Convert this to a friendly tone, maintain technical details but reduce bullets in favor of narrative. Remove any jargon like \'genie router\'. Use canvas"',
+  '',
+  'Enhanced prompt:',
+  '"Transform the provided content into a friendly narrative format while preserving all technical details. Minimize bullet points in favor of flowing prose. Eliminate any technical jargon such as \'genie router\'. Incorporate the concept of using canvas elements naturally within the narrative structure to enhance the technical explanation."',
 ].join('\n')
 
 function buildMetaPrompt(raw, config) {
   const lines = [META_RULES]
-  if (config.language === 'zh') lines.push('7. Write the enhanced prompt in Chinese (Simplified).')
-  else if (config.language === 'en') lines.push('7. Write the enhanced prompt in English.')
-  else lines.push('7. Write the enhanced prompt in the SAME language as the raw input.')
+  // WorkBuddy 的提示词已内置「跟随输入语言」；这两个配置只用于强制覆盖。
+  if (config.language === 'zh') lines.push('', '7. Write the enhanced prompt in Chinese (Simplified).')
+  else if (config.language === 'en') lines.push('', '7. Write the enhanced prompt in English.')
   if (config.styleHint && config.styleHint.trim().length > 0) {
-    lines.push(`Additional style requirements from the host config: ${config.styleHint.trim()}`)
+    lines.push('', `Additional style requirements from the host config: ${config.styleHint.trim()}`)
   }
-  lines.push('', 'Raw input:', '<original_prompt>', raw, '</original_prompt>')
+  lines.push('', 'Raw input:', raw)
   return lines.join('\n')
 }
 
@@ -189,21 +226,44 @@ async function rewriteWithLlm(ctx, route, raw, config, outerSignal) {
 export function apply(ctx, config) {
   const log = (level, msg) => console[level === 'error' ? 'error' : 'log'](`[dsh-prompt-enhancer] ${msg}`)
 
-  /** 最近一次见到的会话路由，供 enhance_prompt 工具在没有显式配置时复用。 */
+  /** 最近一次见到的会话路由，供 enhance_prompt 工具和 web 端点在没有显式配置时复用。 */
   let lastRoute = null
 
   /**
-   * 运行时开关：由 web 输入框的图标按钮写入，只影响本次进程。
-   * 重启后回到 profile 配置里的 enabled 值（配置为 false 时不可被按钮打开）。
+   * 全局默认模型选择（composer 里的模型选择器改的就是它），
+   * 让输入框按钮在「会话还没创建、没有 agent」时也能拿到路由。
    */
-  let runtimeEnabled = true
-  const isEnabled = () => config.enabled && runtimeEnabled
+  function defaultRoute() {
+    const defaults = ctx.get('agentDefaultModel')
+    const selection = defaults?.currentSelection?.()
+    return selection?.provider && selection?.model
+      ? { provider: selection.provider, model: selection.model }
+      : null
+  }
+
+  /** 配置里显式指定的路由。 */
+  function configRoute() {
+    return config.provider && config.model ? { provider: config.provider, model: config.model } : null
+  }
 
   function resolveRoute(agent) {
-    const provider = config.provider || agent?.options?.provider
-    const model = config.model || agent?.options?.model
-    return provider && model ? { provider, model } : null
+    const provider = agent?.options?.provider
+    const model = agent?.options?.model
+    return configRoute()
+      ?? (provider && model ? { provider, model } : null)
+      ?? defaultRoute()
   }
+
+  /** web 端点没有 agent：配置 > 最近一次会话路由 > 全局默认选择。 */
+  function endpointRoute() {
+    return configRoute() ?? lastRoute ?? defaultRoute()
+  }
+
+  // 会话一建立就记住路由，这样输入框按钮在「还没发过消息」时也能工作。
+  ctx.on('agent/created', ({ agent }) => {
+    const route = resolveRoute(agent)
+    if (route) lastRoute = route
+  })
 
   /** 对单条消息做增强；不需要增强时原样返回同一个对象。 */
   async function enhanceOne(message, agent, signal) {
@@ -245,8 +305,7 @@ export function apply(ctx, config) {
       if (decision.kind !== 'enter') return decision
       const route = resolveRoute(agent)
       if (route) lastRoute = route
-      // 输入框的开关图标可以临时关掉自动增强，此时直接放行。
-      if (!isEnabled() || config.mode !== 'auto') return decision
+      if (config.mode !== 'auto') return decision
       const messages = await enhanceBatch(decision.messages, agent, signal)
       if (messages === decision.messages) return decision
       // spread 保留未来新增的 decision 字段
@@ -268,7 +327,7 @@ export function apply(ctx, config) {
         render: (_args, value) => [{ type: 'text', text: value }],
       },
       async execute(args, exec) {
-        const route = resolveRoute(null) ?? lastRoute
+        const route = endpointRoute()
         if (!route) throw new Error('No model route available: set provider/model in the plugin config.')
         const enhanced = await rewriteWithLlm(ctx, route, String(args.prompt ?? '').trim(), config, exec?.signal)
         return enhanced
@@ -281,32 +340,22 @@ export function apply(ctx, config) {
   }
 
   /* ------------------------------------------------------------------ */
-  /* web 端开关端点（只在有 webServer 的宿主里注册）                       */
+  /* web 端「增强提示词」端点（只在有 webServer 的宿主里注册）              */
   /* ------------------------------------------------------------------ */
 
-  const statePayload = () => ({
-    enabled: isEnabled(),
-    configEnabled: config.enabled === true,
-    mode: config.mode,
-  })
-
-  // 可选注入：CLI / TUI 等没有 webServer 的宿主照常加载，只是没有图标开关。
+  // 可选注入：CLI / TUI 等没有 webServer 的宿主照常加载，只是没有输入框按钮。
   ctx.inject(['webServer'], (webCtx) => {
     webCtx.effect(() => webCtx.webServer.register({
       kind: 'exact',
-      path: '/api/prompt-enhancer/state',
+      path: '/api/prompt-enhancer/rewrite',
       handler: async (req, res) => {
         const send = (status, body) => {
           res.statusCode = status
           res.setHeader('content-type', 'application/json')
           res.end(JSON.stringify(body))
         }
-        if (req.method === 'GET') {
-          send(200, statePayload())
-          return
-        }
         if (req.method !== 'POST') {
-          res.setHeader('allow', 'GET, POST')
+          res.setHeader('allow', 'POST')
           send(405, { error: 'method-not-allowed' })
           return
         }
@@ -319,15 +368,29 @@ export function apply(ctx, config) {
           send(400, { error: 'invalid-json' })
           return
         }
-        if (typeof body?.enabled !== 'boolean') {
-          send(400, { error: 'enabled must be a boolean' })
+        const text = typeof body?.text === 'string' ? body.text.trim() : ''
+        if (text.length === 0) {
+          send(400, { error: 'text must be a non-empty string' })
           return
         }
-        runtimeEnabled = body.enabled
-        log('log', `runtime toggle -> ${runtimeEnabled ? 'on' : 'off'}`)
-        send(200, statePayload())
+        if (text.length > config.maxInputChars) {
+          send(413, { error: `text exceeds ${config.maxInputChars} chars` })
+          return
+        }
+        const route = endpointRoute()
+        if (!route) {
+          send(409, { error: 'no model route available; set provider/model in the plugin config' })
+          return
+        }
+        try {
+          const enhanced = await rewriteWithLlm(ctx, route, text, config)
+          send(200, { text: enhanced })
+        } catch (err) {
+          log('error', `composer enhance failed: ${err?.message ?? err}`)
+          send(502, { error: 'enhance-failed' })
+        }
       },
-    }), 'prompt-enhancer: /api/prompt-enhancer/state')
+    }), 'prompt-enhancer: /api/prompt-enhancer/rewrite')
   })
 }
 
