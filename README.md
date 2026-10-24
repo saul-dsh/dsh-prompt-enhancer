@@ -3,7 +3,7 @@
 [English](README.en.md) | 简体中文
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-3da639.svg)](LICENSE)
-[![version](https://img.shields.io/badge/version-0.2.2-blue.svg)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.2.3-blue.svg)](CHANGELOG.md)
 [![dsh](https://img.shields.io/badge/dsh-%E2%89%A50.2.0-5b8def.svg)](https://github.com/deepseek-ai/deepseek-harness)
 [![Node](https://img.shields.io/badge/node-%E2%89%A518-339933.svg)](https://nodejs.org)
 [![CI](https://github.com/saul-dsh/dsh-prompt-enhancer/actions/workflows/ci.yml/badge.svg)](https://github.com/saul-dsh/dsh-prompt-enhancer/actions)
@@ -123,7 +123,7 @@ dsh --profile web --patch ./scratch.cordis.yml
 输入框左侧一个 ✨ 按钮，强度面板挂在它上面。
 
 - **✨ 按钮**：点一下手动增强当前草稿，改完写回输入框不发送。增强成功后按钮变成红色的撤销图标，点一下恢复原文。这个状态一直保留，直到你改动草稿或者把消息发出去。
-- **悬浮面板**：鼠标停在 ✨ 上约 1.5 秒，向上弹出强度滑块（Low / High / Max）和「发送时自动增强」开关。滑块是粗轨道加大圆手柄，填充区随档位出现渐变色和闪烁星点，档位越高星点越密。选完鼠标移开自动收起，不会挡住输入框。
+- **悬浮面板**：鼠标停在 ✨ 上约 1.5 秒，向上弹出强度滑块（Low / High / Max）和「发送时自动增强」开关。滑块是粗轨道加大圆手柄，填充区随档位出现渐变色和从右往左流动的小光点，档位越高光点越密。选完鼠标移开自动收起，不会挡住输入框。
 - **发送时自动增强**：**默认关闭**。打开后点发送按钮或按 Enter 不会立刻发出：发送按钮先变成三点旋转，增强结果写回输入框**停留约 0.7 秒**让你看清改写结果，然后才自动 submit。失败就按原文发，不会把你卡在输入框里。
 - **不拦截的情况**：空草稿（纯附件发送）、斜杠命令、Shift/Ctrl/Alt+Enter、输入法组合中的回车。
 

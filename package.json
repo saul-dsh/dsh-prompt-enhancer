@@ -1,6 +1,6 @@
 {
   "name": "dsh-prompt-enhancer",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Chat-box prompt auto-enhancement for DeepSeek Harness (dsh): rewrites your rough input into a clear, self-contained prompt before it reaches the model. Works like the prompt enhancer in WorkBuddy.",
   "type": "module",
   "main": "index.js",

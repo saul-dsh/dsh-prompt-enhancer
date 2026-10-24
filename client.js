@@ -40,13 +40,19 @@ window.__ModuleLoader__.load({
       max: { label: 'Max', grad: 'linear-gradient(90deg,#22c55e,#06b6d4,#3b82f6)' },
     }
 
-    // 填充区里的星点：位置按百分比撒，档位越高亮起的越多。
+    // 填充区里从右往左流动的小点。delay 错开形成连续的光流，
+    // size 不同是照抄 dsh 那个面板的观感：点大小不齐才不像机器画的。
     const SPARKS = [
-      [7, 28, 0], [14, 64, 0.35], [22, 40, 0.7], [29, 68, 1.05],
-      [37, 26, 0.5], [44, 58, 0.9], [52, 34, 0.2], [59, 66, 1.3],
-      [67, 30, 0.6], [74, 54, 1.0], [82, 38, 0.45], [90, 62, 1.15],
+      { delay: 0, size: 3, top: 30 },
+      { delay: 0.22, size: 2, top: 62 },
+      { delay: 0.45, size: 4, top: 42 },
+      { delay: 0.68, size: 2, top: 70 },
+      { delay: 0.9, size: 3, top: 26 },
+      { delay: 1.13, size: 2, top: 58 },
+      { delay: 1.35, size: 4, top: 36 },
+      { delay: 1.58, size: 3, top: 66 },
     ]
-    const SPARK_COUNT = { low: 3, high: 7, max: 12 }
+    const SPARK_COUNT = { low: 3, high: 5, max: 8 }
 
     const PANEL_W = 240
     const PANEL_H = 178
@@ -166,13 +172,15 @@ button[data-dsh-pe-busy]::after{
   transition:width .18s cubic-bezier(.4,0,.2,1),background .2s ease;
 }
 .dsh-pe-spark{
-  position:absolute;width:3px;height:3px;border-radius:50%;
-  background:rgba(255,255,255,.9);
-  animation:dsh-pe-twinkle 2.6s ease-in-out infinite;
+  position:absolute;border-radius:50%;background:rgba(255,255,255,.88);
+  animation:dsh-pe-flow 1.8s linear infinite;
 }
-@keyframes dsh-pe-twinkle{
-  0%,100%{opacity:.18;transform:scale(.7)}
-  50%{opacity:.95;transform:scale(1.15)}
+/* 小点从右往左流动，像能量被吸进手柄，不是原地闪。 */
+@keyframes dsh-pe-flow{
+  from{left:100%;opacity:0}
+  10%{opacity:.85}
+  85%{opacity:.85}
+  to{left:-6px;opacity:0}
 }
 .dsh-pe-tick{
   position:absolute;top:50%;width:3px;height:3px;border-radius:50%;
@@ -443,10 +451,16 @@ button[data-dsh-pe-busy]::after{
         },
         h('div', { className: 'dsh-pe-rail' }),
         h('div', { className: 'dsh-pe-fill', style: { width: fillWidth, background: meta.grad } },
-          ...SPARKS.slice(0, SPARK_COUNT[level] ?? 7).map(([left, top, delay], i) => h('i', {
+          ...SPARKS.slice(0, SPARK_COUNT[level] ?? 5).map((s, i) => h('i', {
             key: `spark-${i}`,
             className: 'dsh-pe-spark',
-            style: { left: `${left}%`, top: `${top}%`, animationDelay: `${delay}s` },
+            style: {
+              top: `${s.top}%`,
+              width: `${s.size}px`,
+              height: `${s.size}px`,
+              marginTop: `${-s.size / 2}px`,
+              animationDelay: `${s.delay}s`,
+            },
           })),
         ),
         ...LEVELS.map((lv, i) => h('div', {
