@@ -24,6 +24,12 @@
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import Schema from '@deepseek-ai/schemastery'
+import { appendFile, mkdir } from 'node:fs/promises'
+import { homedir } from 'node:os'
+import { dirname, join } from 'node:path'
+
+/** 排查日志：客户端把拦截决策写到这里，出问题时直接看文件。 */
+const DEBUG_LOG = join(homedir(), '.dsh', 'prompt-enhancer-debug.log')
 
 export const name = 'prompt-enhancer'
 
@@ -89,10 +95,11 @@ const LEVELS = {
       'INTENSITY: HIGH (structured completion).',
       'Rewrite into a clear, self-contained, directly executable request. Add the context, constraints and output expectation that a competent assistant would need.',
       'Do: state the goal explicitly, make implicit requirements explicit, specify the expected output form, keep the user\'s intent and scope.',
-      'Do NOT: invent facts, technologies, file names or numbers the user never mentioned. When a detail is genuinely unknown, express it conditionally ("if X, then Y") instead of fabricating it.',
+      'Do NOT: invent facts, technologies, file names or numbers the user never mentioned. When a detail is genuinely unknown, express it conditionally ("if X, then Y") or mark a default as "(default: ...)".',
+      'Do NOT: reply with "please confirm these details first" or ask the user anything. That converts the prompt into a conversation. Fill the gap yourself and keep the request executable.',
       'Do NOT: turn the request into a tutorial, a plan, or an answer. It must stay a request.',
       'Prefer flowing paragraphs over markdown headings unless the task is clearly multi-part.',
-      'Target length: 1.3x to 2.2x the original.',
+      'Target length: 1.3x to 2.2x the original. For very short inputs (under 20 characters), 2-4x is fine — a bare phrase needs more scaffolding than a half-written spec.',
     ],
   },
   max: {
@@ -106,7 +113,8 @@ const LEVELS = {
       'Do: point out missing critical information as conditional requirements inside the prompt, never as a question back to the user.',
       'Do NOT: invent facts. Every assumption must be labeled.',
       'Do NOT: pad with generic prompt-engineering boilerplate ("You are a world-class expert..."), role-play scaffolding, or restated instructions.',
-      'Markdown sections are allowed when the task is genuinely multi-part; otherwise stay in prose.',
+      'FORMAT: plain text only, because the output lands in a plain-text composer. No "#" headings, no "**bold**", no "-" or "*" bullets, no code fences.',
+      'Structure with short labeled lines instead: 目标：/ 背景：/ 约束：/ 产出：/ 验收： (or Goal:/Context:/Constraints:/Deliverables: when writing English). One requirement per line, sub-points indented with two spaces.',
       'Target length: 2x to 3.5x the original. Never exceed 3500 characters.',
     ],
   },
@@ -129,6 +137,12 @@ const BASE_RULES = [
   '- Do NOT explain HOW to do the task, do NOT answer the question, do NOT add a preamble like "Here is the enhanced prompt".',
   '- Do NOT request guides, tutorials, or code snippets unless the user asked for them.',
   '- Do NOT suggest specific technologies unless they appear in the input.',
+  '',
+  'MISSING INFORMATION — the most important rule:',
+  '- NEVER turn a gap into a question for the user. You are writing a prompt that gets executed immediately, not starting a conversation. Output containing "please confirm...", "请先确认...", "我需要知道..." is a failure.',
+  '- Handle a gap in one of two ways: state a reasonable default inline as "(default: ...)", or phrase it as a conditional requirement inside the prompt ("if the site requires login, ...").',
+  '- Prefer filling in generally applicable constraints (runnable output, dependencies, error handling, acceptance criteria) over interrogating the user about specifics.',
+  '- The rewritten prompt must be executable as-is. Whoever reads it should be able to start working without replying first.',
   '',
   'OUTPUT: only the rewritten prompt text. No commentary, no code fences, no quotes around it.',
 ].join('\n')
@@ -186,6 +200,11 @@ function cleanModelOutput(text) {
   // 去掉最外层成对引号
   const q = out.match(/^"([\s\S]*)"$|^“([\s\S]*)”$/)
   if (q) out = (q[1] ?? q[2]).trim()
+  // 兜底去 markdown：输入框是纯文本，留着 # 和 ** 只会变成噪音
+  out = out
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/\*\*(.+?)\*\*/g, '$1')
+    .replace(/^(\s*)[-*]\s+/gm, '$1· ')
   return out
 }
 
@@ -238,7 +257,9 @@ async function rewriteWithLlm(ctx, route, raw, config, level, outerSignal) {
     const cleaned = cleanModelOutput(collected)
     if (!cleaned) throw new Error('prompt-enhancer got empty output')
     // 失控保护：模型把一句话膨胀成小作文时判失败，回退原文而不是塞给用户。
-    const limit = Math.max(Math.round(raw.length * spec.maxRatio * 1.6), raw.length + 200)
+    // 短输入天然膨胀率高（12 字补成 300 字是合理的），所以保底 600 字；
+    // 长输入按倍数算，但封顶 4000 字，避免 4000 字输入算出 2 万字上限。
+    const limit = Math.min(Math.max(Math.round(raw.length * spec.maxRatio * 1.6), 600), 4000)
     if (cleaned.length > limit) {
       throw new Error(`prompt-enhancer output runaway: ${cleaned.length} chars > ${limit}`)
     }
@@ -460,6 +481,20 @@ export function apply(ctx, config) {
           currentLevel = next
           log('log', `level -> ${next}`)
           send(200, { level: currentLevel })
+          return
+        }
+
+        // 前端把拦截决策写进 ~/.dsh/prompt-enhancer-debug.log，排查用。
+        if (path === '/debug' && req.method === 'POST') {
+          let raw = ''
+          for await (const chunk of req) raw += chunk
+          try {
+            await mkdir(dirname(DEBUG_LOG), { recursive: true })
+            await appendFile(DEBUG_LOG, `${new Date().toISOString()} ${raw}\n`, 'utf8')
+          } catch (err) {
+            log('error', `debug log failed: ${err?.message ?? err}`)
+          }
+          send(200, { ok: true })
           return
         }
 

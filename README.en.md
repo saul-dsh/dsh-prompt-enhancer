@@ -3,7 +3,7 @@
 English | [简体中文](README.md)
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-3da639.svg)](LICENSE)
-[![version](https://img.shields.io/badge/version-0.2.0-blue.svg)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.2.2-blue.svg)](CHANGELOG.md)
 [![dsh](https://img.shields.io/badge/dsh-%E2%89%A50.2.0-5b8def.svg)](https://github.com/deepseek-ai/deepseek-harness)
 [![Node](https://img.shields.io/badge/node-%E2%89%A518-339933.svg)](https://nodejs.org)
 [![CI](https://github.com/saul-dsh/dsh-prompt-enhancer/actions/workflows/ci.yml/badge.svg)](https://github.com/saul-dsh/dsh-prompt-enhancer/actions)
@@ -16,7 +16,7 @@ A **chat-box prompt auto-enhancement plugin** for [DeepSeek Harness (dsh)](https
 your input → press send → send button shows three spinning dots → [rewrite] → enhanced prompt is sent automatically
 ```
 
-Three intensity levels (Low / High / Max) plus an "auto-enhance on send" toggle, both on the ✨ button at the left of the composer: rest the cursor on it for ~0.7s and a small panel pops up. **Auto-enhance is off by default** — try the ✨ button first, turn it on when it feels right.
+Three intensity levels (Low / High / Max) plus an "auto-enhance on send" toggle, both on the ✨ button at the left of the composer: rest the cursor on it for ~1.5s and a small panel pops up. **Auto-enhance is off by default** — try the ✨ button first, turn it on when it feels right.
 
 ## Intensity levels
 
@@ -73,9 +73,9 @@ On success, the startup log prints `[dsh-prompt-enhancer] loaded (mode=auto, ...
 
 ## Composer UI
 
-- **✨ button** (left): click to rewrite the current draft in place, no send.
-- **Hover panel**: rest the cursor on ✨ for ~0.7s and an intensity slider pops up above the composer (Low / High / Max) together with the "auto-enhance on send" toggle. It closes when the cursor leaves, and it opens upward so it never overflows the viewport.
-- **Auto-enhance on send** (off by default): when enabled, pressing send or Enter does not send immediately. The send button turns into three spinning dots, the rewrite lands back in the composer, then `submit()` fires. On failure the original text is sent — you are never stuck in the composer.
+- **✨ button** (left): click to rewrite the current draft in place, no send. After a successful rewrite the button turns into a red undo icon — one click restores the original. It stays there until you edit the draft or send the message.
+- **Hover panel**: rest the cursor on ✨ for ~1.5s and an intensity slider pops up above the composer (Low / High / Max) together with the "auto-enhance on send" toggle. Thick track, large knob, and a gradient fill with twinkling sparks that get denser as the level rises. It closes when the cursor leaves, and it opens upward so it never overflows the viewport.
+- **Auto-enhance on send** (off by default): when enabled, pressing send or Enter does not send immediately. The send button turns into three spinning dots, the rewrite lands back in the composer and **stays there for about 0.7s** so you can see what changed, then `submit()` fires. On failure the original text is sent — you are never stuck in the composer.
 - **Not intercepted**: empty draft (attachment-only sends), slash commands, Shift/Ctrl/Alt+Enter, and Enter during IME composition.
 
 ## How it works
@@ -89,7 +89,8 @@ On success, the startup log prints `[dsh-prompt-enhancer] loaded (mode=auto, ...
 ## Notes
 
 - dsh is in **developer preview**; the plugin API may change between releases. This plugin targets the `0.2.x` event/type surface — re-check the `agent/pre-step` signature and the `[data-composer-dock]` structure after upgrades.
-- Send interception depends on dsh's composer DOM (`[data-composer-dock]` plus the send button's aria-label). If a dsh release breaks that, interception silently disables itself and the pre-step fallback takes over.
+- Send interception depends on dsh's composer DOM: the send button lives in `css.composer`, while `[data-composer-dock]` only marks the bottom dock, so the container is resolved as `dock.parentElement` with a global aria-label fallback. If a dsh release breaks that, interception silently disables itself and the pre-step fallback takes over.
+- When interception declines to run, a line is appended to `~/.dsh/prompt-enhancer-debug.log` with the reason (`autoSend`, whether input actions were available, visible button labels). Successful interceptions are not logged.
 - Each sent message costs **one extra LLM call** (the rewrite itself). Configure a fast model, or use Low for shorter and faster output.
 - The enhanced prompt is what gets logged into the session (same as WorkBuddy's behavior).
 

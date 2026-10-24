@@ -11,8 +11,12 @@
  *      草稿送去增强、期间发送按钮显示三点旋转，拿到结果后写回草稿再 submit()。
  *
  * 拦截策略是捕获阶段监听（document capture），拿到事件后阻止它到达 React
- * 的事件根，避免 dsh 自己的 onClick 先触发。定位发送按钮靠 `[data-composer-dock]`
- * 这个稳定属性 + aria-label 语义；任何一步失败都直接放行原消息，绝不卡住发送。
+ * 的事件根，避免 dsh 自己的 onClick 先触发。
+ *
+ * 定位方式：`[data-composer-dock]` 只是输入区底部那条 dock，编辑器和发送按钮
+ * 都在它的**兄弟节点**里，所以容器要取 dock 的 parentElement，再按 aria-label
+ * 语义（send / 发送 / 排队 / steer）找发送按钮。任何一步失败都直接放行原消息，
+ * 绝不卡住发送。
  */
 
 window.__ModuleLoader__.load({
@@ -31,14 +35,22 @@ window.__ModuleLoader__.load({
     const STYLE_ID = 'dsh-prompt-enhancer-style'
 
     const LEVEL_META = {
-      low: { label: 'Low', grad: 'linear-gradient(90deg,#15803d,#22c55e)' },
-      high: { label: 'High', grad: 'linear-gradient(90deg,#22c55e,#06b6d4)' },
-      max: { label: 'Max', grad: 'linear-gradient(90deg,#06b6d4,#3b82f6)' },
+      low: { label: 'Low', grad: 'linear-gradient(90deg,#16a34a,#22c55e)' },
+      high: { label: 'High', grad: 'linear-gradient(90deg,#22c55e,#22d3ee)' },
+      max: { label: 'Max', grad: 'linear-gradient(90deg,#22c55e,#06b6d4,#3b82f6)' },
     }
 
-    const PANEL_W = 224
-    const PANEL_H = 168
-    const HOVER_DELAY = 1100
+    // 填充区里的星点：位置按百分比撒，档位越高亮起的越多。
+    const SPARKS = [
+      [7, 28, 0], [14, 64, 0.35], [22, 40, 0.7], [29, 68, 1.05],
+      [37, 26, 0.5], [44, 58, 0.9], [52, 34, 0.2], [59, 66, 1.3],
+      [67, 30, 0.6], [74, 54, 1.0], [82, 38, 0.45], [90, 62, 1.15],
+    ]
+    const SPARK_COUNT = { low: 3, high: 7, max: 12 }
+
+    const PANEL_W = 240
+    const PANEL_H = 178
+    const HOVER_DELAY = 1500
     const CLOSE_DELAY = 260
     const EXIT_MS = 130
 
@@ -116,10 +128,10 @@ button[data-dsh-pe-busy]::after{
 }
 
 .dsh-pe-panel{
-  position:fixed;z-index:9999;width:208px;padding:10px 12px 8px;
+  position:fixed;z-index:9999;width:240px;padding:14px 16px 12px;
   border-radius:10px;border:1px solid rgba(255,255,255,.10);
-  background:#232323;color:#e8e8e8;
-  box-shadow:0 10px 28px rgba(0,0,0,.42),0 2px 6px rgba(0,0,0,.28);
+  background:#262626;color:#e8e8e8;
+  box-shadow:0 12px 32px rgba(0,0,0,.42),0 2px 6px rgba(0,0,0,.28);
   font-size:11px;line-height:1.45;
   user-select:none;
   /* 从按钮一侧「长出来」：底部中心为原点缩放，配合快出慢收的缓动 */
@@ -139,26 +151,35 @@ button[data-dsh-pe-busy]::after{
   from{opacity:1;transform:scale(1) translateY(0)}
   to{opacity:0;transform:scale(.92) translateY(5px)}
 }
-.dsh-pe-head{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:11px}
+.dsh-pe-head{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:12px}
 .dsh-pe-title{font-size:11px;color:rgba(255,255,255,.55);letter-spacing:.02em}
-.dsh-pe-value{font-size:13px;font-weight:500;color:#fff;letter-spacing:.01em}
-.dsh-pe-track{position:relative;height:26px;display:flex;align-items:center;cursor:pointer;touch-action:none}
+.dsh-pe-value{font-size:15px;font-weight:500;color:#fff;letter-spacing:.01em}
+.dsh-pe-track{position:relative;height:32px;display:flex;align-items:center;cursor:pointer;touch-action:none}
 .dsh-pe-rail{
-  position:absolute;left:8px;right:8px;height:10px;border-radius:5px;
+  position:absolute;left:12px;right:12px;height:12px;border-radius:6px;
   background:rgba(255,255,255,.10);
   box-shadow:inset 0 0 0 1px rgba(255,255,255,.05);
 }
 .dsh-pe-fill{
-  position:absolute;left:8px;top:50%;height:10px;border-radius:5px;
-  transform:translateY(-50%);
+  position:absolute;left:12px;top:50%;height:12px;border-radius:6px;
+  transform:translateY(-50%);overflow:hidden;
   transition:width .18s cubic-bezier(.4,0,.2,1),background .2s ease;
 }
+.dsh-pe-spark{
+  position:absolute;width:3px;height:3px;border-radius:50%;
+  background:rgba(255,255,255,.9);
+  animation:dsh-pe-twinkle 2.6s ease-in-out infinite;
+}
+@keyframes dsh-pe-twinkle{
+  0%,100%{opacity:.18;transform:scale(.7)}
+  50%{opacity:.95;transform:scale(1.15)}
+}
 .dsh-pe-tick{
-  position:absolute;top:50%;width:2px;height:2px;border-radius:50%;
-  background:rgba(255,255,255,.40);transform:translate(-50%,-50%);pointer-events:none;
+  position:absolute;top:50%;width:3px;height:3px;border-radius:50%;
+  background:rgba(255,255,255,.28);transform:translate(-50%,-50%);pointer-events:none;
 }
 .dsh-pe-knob{
-  position:absolute;top:50%;width:15px;height:15px;border-radius:50%;
+  position:absolute;top:50%;width:22px;height:22px;border-radius:50%;
   background:#fff;
   box-shadow:0 1px 3px rgba(0,0,0,.45),0 0 0 1px rgba(0,0,0,.05);
   transform:translate(-50%,-50%) scale(1);
@@ -167,13 +188,13 @@ button[data-dsh-pe-busy]::after{
 }
 .dsh-pe-knob[data-dragging="true"]{
   transition:left 0s,transform .12s ease;
-  transform:translate(-50%,-50%) scale(1.15);
+  transform:translate(-50%,-50%) scale(1.12);
 }
-.dsh-pe-legend{display:flex;justify-content:space-between;margin-top:9px;padding:0 8px}
+.dsh-pe-legend{display:flex;justify-content:space-between;margin-top:10px;padding:0 10px}
 .dsh-pe-legend span{font-size:11px;color:rgba(255,255,255,.36);cursor:pointer;transition:color .15s}
 .dsh-pe-legend span[data-active="true"]{color:#fff;font-weight:500}
 .dsh-pe-legend span:hover{color:rgba(255,255,255,.75)}
-.dsh-pe-sep{height:1px;margin:12px 0 10px;background:rgba(255,255,255,.08)}
+.dsh-pe-sep{height:1px;margin:13px 0 11px;background:rgba(255,255,255,.08)}
 .dsh-pe-row{display:flex;align-items:center;justify-content:space-between;cursor:pointer;padding:1px 0}
 .dsh-pe-row-label{font-size:11px;color:rgba(255,255,255,.80)}
 .dsh-pe-switch{
@@ -206,6 +227,17 @@ button[data-dsh-pe-busy]::after{
       return typeof data?.text === 'string' ? data.text : ''
     }
 
+    /** 把拦截决策写进宿主的排查日志，出问题时直接看 ~/.dsh/prompt-enhancer-debug.log。 */
+    function report(payload) {
+      try {
+        fetch(`${ENDPOINT}/debug`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(payload),
+        }).catch(() => { /* ignore */ })
+      } catch { /* ignore */ }
+    }
+
     /* ---------------------------------------------------------------- */
     /* 发送拦截                                                          */
     /* ---------------------------------------------------------------- */
@@ -213,25 +245,46 @@ button[data-dsh-pe-busy]::after{
     /** 当前会话的输入动作与草稿，由挂载的组件持续写入。 */
     const live = { actions: null, draft: '' }
 
-    /** 发送按钮 = composer dock 内最后一个可用的、语义为「发送」的按钮。 */
-    function findSendButton() {
-      if (typeof document === 'undefined') return null
+    /**
+     * 输入区根节点。
+     * `[data-composer-dock]` 只是底部那条 dock（ContextMeter 之类），
+     * 编辑器和发送按钮都在它的**兄弟节点** css.composer 里，
+     * 所以容器要取 dock 的父元素，否则一个按钮都找不到。
+     */
+    function composerRoot() {
       const dock = document.querySelector('[data-composer-dock]')
-      if (!dock) return null
-      const buttons = dock.querySelectorAll('button')
-      for (let i = buttons.length - 1; i >= 0; i--) {
-        const btn = buttons[i]
-        if (btn.disabled) continue
-        const label = (btn.getAttribute('aria-label') || '').toLowerCase()
-        if (label.includes('send') || label.includes('发送') || label.includes('排队') || label.includes('steer')) {
-          return btn
+      return dock && dock.parentElement ? dock.parentElement : null
+    }
+
+    /** 发送按钮 = 输入区里最后一个 aria-label 语义为「发送」的可见按钮。 */
+    function findSendButton() {
+      // 优先在输入区里找；输入区认不出来就全局找，不把成败绑在某个容器的层级上。
+      const scopes = []
+      const root = composerRoot()
+      if (root) scopes.push(root)
+      scopes.push(document)
+
+      for (const scope of scopes) {
+        const buttons = scope.querySelectorAll('button[aria-label]')
+        for (let i = buttons.length - 1; i >= 0; i--) {
+          const btn = buttons[i]
+          if (btn.disabled) continue
+          if (btn.offsetParent === null) continue
+          const label = (btn.getAttribute('aria-label') || '').toLowerCase()
+          if (label.includes('send') || label.includes('发送') || label.includes('排队') || label.includes('steer')) {
+            return btn
+          }
         }
       }
       return null
     }
 
     function inComposer(node) {
-      return !!(node && node.closest && node.closest('[data-composer-dock]'))
+      if (!node || !node.closest) return false
+      // 编辑器本身是 contenteditable，直接认它，不用往上找容器。
+      if (node.closest('[contenteditable="true"]')) return true
+      const root = composerRoot()
+      return !!(root && root.contains(node))
     }
 
     let intercepting = false
@@ -239,6 +292,9 @@ button[data-dsh-pe-busy]::after{
     function shouldIntercept() {
       return settings.autoSend && settings.level !== 'off' && !intercepting && live.actions !== null
     }
+
+    /** 增强结果写回草稿后停留多久再自动发送。太短用户看不见变化，像直接发原文。 */
+    const REVEAL_MS = 700
 
     async function enhanceThenSend(button) {
       if (intercepting) return
@@ -258,23 +314,49 @@ button[data-dsh-pe-busy]::after{
         const enhanced = await enhance(raw, settings.level)
         if (enhanced.length > 0 && enhanced !== raw) {
           actions.setDraft(enhanced)
-          // Lexical 的离散更新是同步的，但仍等一拍，确保 submit 读到新草稿。
-          await new Promise((r) => setTimeout(r, 60))
+          // 先把增强结果摆进输入框让用户看见，停一下再发出去。
+          await new Promise((r) => setTimeout(r, REVEAL_MS))
         }
       } catch (err) {
         // 增强失败就按原文发，不能让用户卡在输入框里。
         console.error('[dsh-prompt-enhancer] enhance failed, sending original', err)
-      } finally {
-        if (button) button.removeAttribute('data-dsh-pe-busy')
-        intercepting = false
       }
+      if (button) button.removeAttribute('data-dsh-pe-busy')
+      // 提交前一直占着锁，避免 700ms 里重复点击触发第二次增强。
+      intercepting = false
       actions.submit()
     }
 
     function onClickCapture(e) {
-      if (!shouldIntercept()) return
+      if (!(e.target instanceof Node)) return
+      const hit = e.target.closest ? e.target.closest('button') : null
+      const hitLabel = hit ? (hit.getAttribute('aria-label') || '') : ''
+      const looksLikeSend = /send|发送|排队|steer/i.test(hitLabel)
+
+      if (!shouldIntercept()) {
+        // 只记录「像发送按钮」的点击，避免刷屏。
+        if (looksLikeSend) {
+          report({
+            phase: 'skip',
+            label: hitLabel,
+            autoSend: settings.autoSend,
+            level: settings.level,
+            hasActions: live.actions !== null,
+            intercepting,
+          })
+        }
+        return
+      }
+
       const btn = findSendButton()
-      if (!btn || !(e.target instanceof Node) || !btn.contains(e.target)) return
+      if (!btn || !btn.contains(e.target)) {
+        if (looksLikeSend) {
+          report({ phase: 'no-target', label: hitLabel, found: btn ? btn.getAttribute('aria-label') : null })
+        }
+        return
+      }
+
+      // 正常拦截不记日志，只有出问题的分支才写，避免日志无限增长。
       e.preventDefault()
       e.stopPropagation()
       e.stopImmediatePropagation()
@@ -331,12 +413,12 @@ button[data-dsh-pe-busy]::after{
       const index = Math.max(0, LEVELS.indexOf(level))
       const pct = (index / (LEVELS.length - 1)) * 100
       const meta = LEVEL_META[level] ?? LEVEL_META.high
-      // 轨道左右各留 8px 给手柄半径，手柄不会压在轨道圆角外。
-      const knobLeft = `calc(${pct}% + ${(8 - pct * 0.16).toFixed(2)}px)`
-      const fillWidth = `calc(${pct}% - ${(pct * 0.16).toFixed(2)}px)`
+      // 轨道左右各留 12px 给手柄半径，手柄不会压在轨道圆角外。
+      const knobLeft = `calc(${pct}% + ${(12 - pct * 0.24).toFixed(2)}px)`
+      const fillWidth = `calc(${pct}% - ${(pct * 0.24).toFixed(2)}px)`
       const tickLeft = (i) => {
         const p = (i / (LEVELS.length - 1)) * 100
-        return `calc(${p}% + ${(8 - p * 0.16).toFixed(2)}px)`
+        return `calc(${p}% + ${(12 - p * 0.24).toFixed(2)}px)`
       }
 
       return h('div', null,
@@ -360,7 +442,13 @@ button[data-dsh-pe-busy]::after{
           onPointerCancel: onDragEnd,
         },
         h('div', { className: 'dsh-pe-rail' }),
-        h('div', { className: 'dsh-pe-fill', style: { width: fillWidth, background: meta.grad } }),
+        h('div', { className: 'dsh-pe-fill', style: { width: fillWidth, background: meta.grad } },
+          ...SPARKS.slice(0, SPARK_COUNT[level] ?? 7).map(([left, top, delay], i) => h('i', {
+            key: `spark-${i}`,
+            className: 'dsh-pe-spark',
+            style: { left: `${left}%`, top: `${top}%`, animationDelay: `${delay}s` },
+          })),
+        ),
         ...LEVELS.map((lv, i) => h('div', {
           key: `tick-${lv}`,
           className: 'dsh-pe-tick',
@@ -397,6 +485,8 @@ button[data-dsh-pe-busy]::after{
     function EnhanceButton({ useInput, inputActions }) {
       const draft = useInput((s) => s.draft)
       const [busy, setBusy] = React.useState(false)
+      /** 增强后保留原文，草稿没被改动前可以一键撤销。 */
+      const [undo, setUndo] = React.useState(null)
       const [state, setState] = React.useState({ ...settings })
       const [open, setOpen] = React.useState(false)
       const [closing, setClosing] = React.useState(false)
@@ -422,6 +512,18 @@ button[data-dsh-pe-busy]::after{
         clearTimeout(exitTimer.current)
       }, [])
 
+      // 撤销只在草稿被改动后失效。增强结果还留在输入框里就一直挂着，
+      // 不设超时：用户可能看半天才决定要不要退回去。
+      React.useEffect(() => {
+        if (undo === null) return
+        if (typeof draft !== 'string' || draft !== undo.enhanced) setUndo(null)
+      }, [draft, undo])
+
+      // 开始增强时，已经打开的面板立刻收起，别挡着看结果。
+      React.useEffect(() => {
+        if (busy) hide()
+      }, [busy])
+
       const place = () => {
         const el = anchorRef.current
         if (!el) return null
@@ -434,6 +536,8 @@ button[data-dsh-pe-busy]::after{
       }
 
       const show = () => {
+        // 增强进行中不弹面板：这时候鼠标只是停在按钮上等结果，不是在挑档位。
+        if (busy) return
         clearTimeout(closeTimer.current)
         clearTimeout(exitTimer.current)
         setClosing(false)
@@ -457,6 +561,7 @@ button[data-dsh-pe-busy]::after{
       const onEnter = () => {
         clearTimeout(closeTimer.current)
         clearTimeout(exitTimer.current)
+        if (busy) return
         if (open) {
           // 正在退场时鼠标又回来了：撤销关闭。
           setClosing(false)
@@ -497,12 +602,29 @@ button[data-dsh-pe-busy]::after{
       }
 
       const levelLabel = (LEVEL_META[state.level] ?? LEVEL_META.high).label
-      const label = busy ? '正在增强提示词…' : `增强提示词（强度 ${levelLabel}）`
+      const showUndo = undo !== null && !busy && text === undo.enhanced
+      const label = busy
+        ? '正在增强提示词…'
+        : showUndo
+          ? '撤销增强，恢复原文'
+          : `增强提示词（强度 ${levelLabel}）`
       const icon = busy
         ? h('span', {
           style: { display: 'inline-flex', animation: 'dsh-pe-spin 1s linear infinite' },
         }, h(IconLoadingOutlineRegular, { size: 16 }))
-        : h(IconSparkleRegular, { size: 16 })
+        : showUndo
+          ? h('svg', { width: 16, height: 16, viewBox: '0 0 16 16', 'aria-hidden': true },
+            h('path', {
+              d: 'M5.5 4.5L2 8l3.5 3.5',
+              fill: 'none', stroke: 'currentColor', 'stroke-width': 1.6,
+              'stroke-linecap': 'round', 'stroke-linejoin': 'round',
+            }),
+            h('path', {
+              d: 'M2 8h7.5a3.5 3.5 0 010 7H7.5',
+              fill: 'none', stroke: 'currentColor', 'stroke-width': 1.6,
+              'stroke-linecap': 'round',
+            }))
+          : h(IconSparkleRegular, { size: 16 })
 
       return h('span', {
         ref: anchorRef,
@@ -516,13 +638,26 @@ button[data-dsh-pe-busy]::after{
         'aria-label': label,
         title: label,
         disabled: busy || empty,
-        style: { width: 28, height: 28, padding: 0, opacity: empty ? 0.45 : 1 },
+        style: {
+          width: 28, height: 28, padding: 0,
+          opacity: empty ? 0.45 : 1,
+          color: showUndo ? '#ef4444' : undefined,
+        },
         onClick: async () => {
-          if (busy || empty) return
+          if (busy) return
+          if (showUndo) {
+            inputActions.setDraft(undo.original)
+            setUndo(null)
+            return
+          }
+          if (empty) return
           setBusy(true)
           try {
             const enhanced = await enhance(text, settings.level)
-            if (enhanced.length > 0) inputActions.setDraft(enhanced)
+            if (enhanced.length > 0 && enhanced !== text) {
+              setUndo({ original: text, enhanced })
+              inputActions.setDraft(enhanced)
+            }
           } catch (err) {
             console.error('[dsh-prompt-enhancer] enhance failed', err)
           } finally {
@@ -556,6 +691,34 @@ button[data-dsh-pe-busy]::after{
       apply(ctx) {
         ensureStyle()
         installInterceptors()
+        // 排查用：控制台执行 __dshPeDebug.findSendButton() 能直接看到能不能定位到发送按钮。
+        if (typeof window !== 'undefined') {
+          window.__dshPeDebug = {
+            version: '0.2.2',
+            settings,
+            live,
+            composerRoot,
+            findSendButton,
+            intercepting: () => intercepting,
+          }
+          // 启动 2.5 秒后记一次现场，DOM 那时才渲染完。
+          setTimeout(() => {
+            const btn = findSendButton()
+            report({
+              phase: 'load',
+              version: '0.2.2',
+              autoSend: settings.autoSend,
+              level: settings.level,
+              hasDock: !!document.querySelector('[data-composer-dock]'),
+              hasRoot: !!composerRoot(),
+              sendBtn: btn ? btn.getAttribute('aria-label') : null,
+              buttons: [...document.querySelectorAll('button[aria-label]')]
+                .filter((b) => b.offsetParent !== null)
+                .slice(0, 12)
+                .map((b) => b.getAttribute('aria-label')),
+            })
+          }, 2500)
+        }
         ctx.slots.inject('conversation.input.left', () => ctx.slots.register({
           name: 'conversation.input.left',
           id: 'prompt-enhancer',
