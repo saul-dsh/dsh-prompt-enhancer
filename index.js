@@ -34,6 +34,14 @@ export const Config = Schema.object({
   enabled: Schema.boolean().default(true).description('是否启用自动提示词增强'),
   /** auto：每条人类消息发送前自动增强；manual：只注册 enhance_prompt 工具，不自动改写。 */
   mode: Schema.union(['auto', 'manual']).default('auto').description('auto=自动增强, manual=仅工具'),
+  /** 默认增强强度；前端选择器会覆盖它。off 表示默认不增强。 */
+  level: Schema.union(['off', 'low', 'high', 'max']).default('high').description('默认增强强度：off/low/high/max'),
+  /**
+   * pre-step 兜底增强。默认关闭：前端拦截路径已经负责增强，服务端再动一次
+   * 会让「自动增强关闭」失效（用户看不到，消息却被改了）。
+   * 只有当前端拦截失效、又确实想要兜底时才手动打开。
+   */
+  preStepAuto: Schema.boolean().default(false).description('是否在 pre-step 兜底自动增强（默认关闭，前端已负责增强）'),
   /** 留空则跟随当前会话 Agent 的 provider 路由。 */
   provider: Schema.string().description('增强调用使用的 provider（留空跟随会话）'),
   /** 留空则跟随当前会话 Agent 的 model。建议配一个快模型降低延迟。 */
@@ -51,63 +59,86 @@ export const Config = Schema.object({
 })
 
 /* ------------------------------------------------------------------ */
+/* 增强强度分级                                                         */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 四档强度的差异不在「想得多深」，而在「改多少、补多少、要不要改结构」。
+ * 每档给独立的规则、token 上限和长度上限，避免 Max 档把一句话膨胀成论文。
+ */
+const LEVELS = {
+  off: null,
+  low: {
+    label: 'Low',
+    maxTokens: 900,
+    maxRatio: 1.4,
+    rules: [
+      'INTENSITY: LOW (minimal edit).',
+      'Change only what is necessary to remove ambiguity. Keep the original wording, tone and length as much as possible.',
+      'Do: fix vague pronouns, unclear verbs, missing objects, redundancy, obvious typos. Split run-on sentences.',
+      'Do NOT: add new sections, add headings, invent requirements, add constraints the user did not imply, expand into a spec.',
+      'Target length: at most 1.4x the original. Shorter is better.',
+      'If the input is already clear, return it almost unchanged.',
+    ],
+  },
+  high: {
+    label: 'High',
+    maxTokens: 1800,
+    maxRatio: 2.2,
+    rules: [
+      'INTENSITY: HIGH (structured completion).',
+      'Rewrite into a clear, self-contained, directly executable request. Add the context, constraints and output expectation that a competent assistant would need.',
+      'Do: state the goal explicitly, make implicit requirements explicit, specify the expected output form, keep the user\'s intent and scope.',
+      'Do NOT: invent facts, technologies, file names or numbers the user never mentioned. When a detail is genuinely unknown, express it conditionally ("if X, then Y") instead of fabricating it.',
+      'Do NOT: turn the request into a tutorial, a plan, or an answer. It must stay a request.',
+      'Prefer flowing paragraphs over markdown headings unless the task is clearly multi-part.',
+      'Target length: 1.3x to 2.2x the original.',
+    ],
+  },
+  max: {
+    label: 'Max',
+    maxTokens: 3200,
+    maxRatio: 3.5,
+    rules: [
+      'INTENSITY: MAX (first-principles reconstruction).',
+      'First reason about what outcome the user actually wants, then rebuild the request from that outcome rather than patching the wording.',
+      'Do: decompose into goal, context, constraints, deliverables, acceptance criteria when the task warrants it; surface hidden assumptions and mark each one inline as "(assumption: ...)"; make success verifiable.',
+      'Do: point out missing critical information as conditional requirements inside the prompt, never as a question back to the user.',
+      'Do NOT: invent facts. Every assumption must be labeled.',
+      'Do NOT: pad with generic prompt-engineering boilerplate ("You are a world-class expert..."), role-play scaffolding, or restated instructions.',
+      'Markdown sections are allowed when the task is genuinely multi-part; otherwise stay in prose.',
+      'Target length: 2x to 3.5x the original. Never exceed 3500 characters.',
+    ],
+  },
+}
+
+/* ------------------------------------------------------------------ */
 /* 内置改写元提示词                                                      */
 /* ------------------------------------------------------------------ */
 
-// 与 WorkBuddy（腾讯 WorkBuddy 客户端）内置的 enhance-prompt 代理同源的改写提示词。
-// 逆向自本机 WorkBuddyCN/resources/app.asar → main/server.js（agentName = 'enhance-prompt'）。
-const META_RULES = [
-  'You are a Prompt Engineering Expert specializing in improving user prompts for a development code assistant. When given a prompt, analyze and enhance it to create a more effective version while maintaining its core purpose. The requests are being made to an AI assistant that specializes in writing code.',
+// 基础规则来自 WorkBuddy 客户端内置的 enhance-prompt 代理（逆向自 app.asar，
+// agentName = 'enhance-prompt'），改写为通用 agent 场景，并按强度分级。
+const BASE_RULES = [
+  'You are a Prompt Engineering Expert. You rewrite a user\'s rough input into a more effective prompt for an AI assistant that can read files, run commands and write code.',
   '',
-  'TASK: When given a prompt, analyze and enhance it to create a more effective version while maintaining its core purpose. The requests are being made to an AI assistant that specializes in writing code.',
+  'CORE PRINCIPLES:',
+  '- Preserve the user\'s original intent and scope. You are rewriting a request, not answering it.',
+  '- Never fabricate specifics the user did not provide: no invented tech stack, file paths, numbers, names, or requirements.',
+  '- Keep the output in the exact same language as the input. If the input mixes languages, keep the mix.',
+  '- Remove redundancy, resolve ambiguity, make the ask actionable.',
+  '- Do NOT explain HOW to do the task, do NOT answer the question, do NOT add a preamble like "Here is the enhanced prompt".',
+  '- Do NOT request guides, tutorials, or code snippets unless the user asked for them.',
+  '- Do NOT suggest specific technologies unless they appear in the input.',
   '',
-  'ANALYSIS PROCESS:',
-  'Evaluate the original prompt:',
-  'Identify the main objective',
-  'Note any ambiguities or gaps',
-  'Assess the clarity of instructions',
-  'Check for missing context',
-  'Apply these prompt engineering principles:',
-  'Write clear, specific instructions',
-  'Include necessary context',
-  'Set explicit parameters and constraints',
-  'Structure the output format',
-  'Add relevant examples',
-  'Match tone and complexity to the use case',
-  'Remove redundant information',
-  'Create the enhanced version:',
-  'Maintain the original goal',
-  'Incorporate identified improvements',
-  'Ensure clarity and completeness',
-  'Be realistic in the features to add',
-  'Do NOT request guides/how-tos unless the user asks',
-  'Do NOT ask for code snippets',
-  'Do NOT suggest specific technologies unless mentioned in the user\'s prompt',
-  'Do NOT explain HOW to do things, focus on WHAT',
-  'Do NOT answer questions - expand/rewrite them to be more detailed',
-  'IMPORTANT CONSTRAINTS:',
-  '1. Language matching is the highest priority - You MUST strictly respond in the exact same language as the user\'s input. If the user writes in Chinese, respond in Chinese; if the user writes in English, respond in English; if the user uses another language, respond in that same language. Do not mix languages unless the user\'s input itself mixes languages.',
-  '2. Keep the enhanced prompt concise - maximum length should be around 800 characters',
-  'FORMAT: Provide only the enhanced prompt with no additional commentary.',
-  '',
-  'Example:',
-  '"A website for my dog"',
-  '',
-  'Enhanced prompt:',
-  '"Design a personalized Next.js website dedicated to showcasing my dog. Include sections such as a photo gallery, a biography detailing the dog\'s breed, age, and personality traits, and a blog for sharing stories or updates about your dog\'s adventures. Add a contact form for visitors to reach out with questions or comments. Ensure the website is visually appealing and easy to navigate, with a responsive design that works well on both desktop and mobile devices."',
-  '',
-  'Example:',
-  '"Convert this to a friendly tone, maintain technical details but reduce bullets in favor of narrative. Remove any jargon like \'genie router\'. Use canvas"',
-  '',
-  'Enhanced prompt:',
-  '"Transform the provided content into a friendly narrative format while preserving all technical details. Minimize bullet points in favor of flowing prose. Eliminate any technical jargon such as \'genie router\'. Incorporate the concept of using canvas elements naturally within the narrative structure to enhance the technical explanation."',
+  'OUTPUT: only the rewritten prompt text. No commentary, no code fences, no quotes around it.',
 ].join('\n')
 
-function buildMetaPrompt(raw, config) {
-  const lines = [META_RULES]
+function buildMetaPrompt(raw, config, level) {
+  const spec = LEVELS[level] ?? LEVELS.high
+  const lines = [BASE_RULES, '', spec.rules.join('\n')]
   // WorkBuddy 的提示词已内置「跟随输入语言」；这两个配置只用于强制覆盖。
-  if (config.language === 'zh') lines.push('', '7. Write the enhanced prompt in Chinese (Simplified).')
-  else if (config.language === 'en') lines.push('', '7. Write the enhanced prompt in English.')
+  if (config.language === 'zh') lines.push('', 'OVERRIDE: write the rewritten prompt in Simplified Chinese.')
+  else if (config.language === 'en') lines.push('', 'OVERRIDE: write the rewritten prompt in English.')
   if (config.styleHint && config.styleHint.trim().length > 0) {
     lines.push('', `Additional style requirements from the host config: ${config.styleHint.trim()}`)
   }
@@ -159,7 +190,8 @@ function cleanModelOutput(text) {
 }
 
 /** 调一次 LLM 做改写；任何失败都抛错，由上层兜底放行。 */
-async function rewriteWithLlm(ctx, route, raw, config, outerSignal) {
+async function rewriteWithLlm(ctx, route, raw, config, level, outerSignal) {
+  const spec = LEVELS[level] ?? LEVELS.high
   // 超时与外部取消（用户中断 pre-step）收敛到同一个内部 signal，
   // 底层流会被及时中断，不会在后台继续烧 token。
   const controller = new AbortController()
@@ -183,8 +215,8 @@ async function rewriteWithLlm(ctx, route, raw, config, outerSignal) {
   const iterator = ctx.llm.stream({
     provider: route.provider,
     model: route.model,
-    messages: [{ role: 'user', content: [{ type: 'text', text: buildMetaPrompt(raw, config) }] }],
-    maxTokens: 2048,
+    messages: [{ role: 'user', content: [{ type: 'text', text: buildMetaPrompt(raw, config, level) }] }],
+    maxTokens: spec.maxTokens,
     signal: controller.signal,
   })[Symbol.asyncIterator]()
 
@@ -205,6 +237,11 @@ async function rewriteWithLlm(ctx, route, raw, config, outerSignal) {
     const collected = await Promise.race([collect(), aborted])
     const cleaned = cleanModelOutput(collected)
     if (!cleaned) throw new Error('prompt-enhancer got empty output')
+    // 失控保护：模型把一句话膨胀成小作文时判失败，回退原文而不是塞给用户。
+    const limit = Math.max(Math.round(raw.length * spec.maxRatio * 1.6), raw.length + 200)
+    if (cleaned.length > limit) {
+      throw new Error(`prompt-enhancer output runaway: ${cleaned.length} chars > ${limit}`)
+    }
     return cleaned
   } catch (err) {
     // 中断底层流，避免失败后还在后台烧 token。
@@ -229,6 +266,40 @@ export function apply(ctx, config) {
 
   /** 最近一次见到的会话路由，供 enhance_prompt 工具和 web 端点在没有显式配置时复用。 */
   let lastRoute = null
+
+  /**
+   * 运行时增强强度。前端选择器通过 /api/prompt-enhancer/settings 改这里，
+   * 让 pre-step 与手动按钮共用同一档位。初始值来自配置。
+   */
+  let currentLevel = Object.prototype.hasOwnProperty.call(LEVELS, config.level) ? config.level : 'high'
+
+  /**
+   * 前端刚增强过的文本指纹。发送拦截路径增强完再 submit 时，pre-step 会再看到
+   * 这条消息；用它去重，避免同一句话被改两遍。两分钟自动过期。
+   */
+  const recentEnhanced = new Map()
+  const DEDUPE_TTL = 120_000
+
+  function fingerprint(text) {
+    let h = 0
+    for (let i = 0; i < text.length; i++) {
+      h = (h * 31 + text.charCodeAt(i)) | 0
+    }
+    return `${text.length}:${h}`
+  }
+
+  function rememberEnhanced(text) {
+    const now = Date.now()
+    for (const [key, ts] of recentEnhanced) {
+      if (now - ts > DEDUPE_TTL) recentEnhanced.delete(key)
+    }
+    recentEnhanced.set(fingerprint(text), now)
+  }
+
+  function wasJustEnhanced(text) {
+    const ts = recentEnhanced.get(fingerprint(text))
+    return ts !== undefined && Date.now() - ts < DEDUPE_TTL
+  }
 
   /**
    * 全局默认模型选择（composer 里的模型选择器改的就是它），
@@ -270,10 +341,14 @@ export function apply(ctx, config) {
   async function enhanceOne(message, agent, signal) {
     const raw = singleTextOf(message)
     if (raw === null || shouldSkip(raw, config)) return message
+    // 前端发送拦截路径已经增强过，这里放行，避免二次改写。
+    if (wasJustEnhanced(raw.trim())) return message
+    const level = currentLevel
+    if (!level || level === 'off') return message
     const route = resolveRoute(agent) ?? lastRoute
     if (!route) return message
-    const enhanced = await rewriteWithLlm(ctx, route, raw.trim(), config, signal)
-    log('log', `enhanced ${raw.trim().length} -> ${enhanced.length} chars`)
+    const enhanced = await rewriteWithLlm(ctx, route, raw.trim(), config, level, signal)
+    log('log', `enhanced[${level}] ${raw.trim().length} -> ${enhanced.length} chars`)
     // 用官方工厂重建消息：获得全新稳定 id，source 沿用原消息
     return createUserMessage({
       content: [{ type: 'text', text: enhanced }],
@@ -307,6 +382,8 @@ export function apply(ctx, config) {
       const route = resolveRoute(agent)
       if (route) lastRoute = route
       if (config.mode !== 'auto') return decision
+      // 前端拦截发送并自行增强时，这里不再二次增强（否则同一句话被改两遍）。
+      if (!config.preStepAuto) return decision
       const messages = await enhanceBatch(decision.messages, agent, signal)
       if (messages === decision.messages) return decision
       // spread 保留未来新增的 decision 字段
@@ -330,7 +407,8 @@ export function apply(ctx, config) {
       async execute(args, exec) {
         const route = endpointRoute()
         if (!route) throw new Error('No model route available: set provider/model in the plugin config.')
-        const enhanced = await rewriteWithLlm(ctx, route, String(args.prompt ?? '').trim(), config, exec?.signal)
+        const level = currentLevel === 'off' ? 'high' : currentLevel
+        const enhanced = await rewriteWithLlm(ctx, route, String(args.prompt ?? '').trim(), config, level, exec?.signal)
         return enhanced
       },
     }))
@@ -347,13 +425,47 @@ export function apply(ctx, config) {
   // 可选注入：CLI / TUI 等没有 webServer 的宿主照常加载，只是没有输入框按钮。
   ctx.inject(['webServer'], (webCtx) => {
     webCtx.effect(() => webCtx.webServer.register({
-      kind: 'exact',
-      path: '/api/prompt-enhancer/rewrite',
+      kind: 'prefix',
+      path: '/api/prompt-enhancer',
       handler: async (req, res) => {
         const send = (status, body) => {
           res.statusCode = status
           res.setHeader('content-type', 'application/json')
           res.end(JSON.stringify(body))
+        }
+        const path = (req.url ?? '').split('?')[0].replace(/^\/api\/prompt-enhancer/, '')
+
+        // 前端初始化：读当前档位，避免刷新后选择器回落到默认值。
+        if (path === '/settings' && req.method === 'GET') {
+          send(200, { level: currentLevel, levels: Object.keys(LEVELS) })
+          return
+        }
+
+        // 前端改档位：写进运行时状态，让 pre-step 与按钮共用同一档。
+        if (path === '/settings' && req.method === 'POST') {
+          let raw = ''
+          for await (const chunk of req) raw += chunk
+          let body
+          try {
+            body = JSON.parse(raw)
+          } catch {
+            send(400, { error: 'invalid-json' })
+            return
+          }
+          const next = body?.level
+          if (typeof next !== 'string' || !(next in LEVELS)) {
+            send(400, { error: `level must be one of ${Object.keys(LEVELS).join('/')}` })
+            return
+          }
+          currentLevel = next
+          log('log', `level -> ${next}`)
+          send(200, { level: currentLevel })
+          return
+        }
+
+        if (path !== '/rewrite') {
+          send(404, { error: 'not-found' })
+          return
         }
         if (req.method !== 'POST') {
           res.setHeader('allow', 'POST')
@@ -378,20 +490,29 @@ export function apply(ctx, config) {
           send(413, { error: `text exceeds ${config.maxInputChars} chars` })
           return
         }
+        // 单次请求可以覆盖档位（发送拦截路径会带上当前选择），否则用运行时档位。
+        const requested = typeof body?.level === 'string' && body.level in LEVELS ? body.level : currentLevel
+        const level = requested === 'off' ? null : requested
+        if (!level) {
+          send(200, { text, skipped: 'level-off' })
+          return
+        }
         const route = endpointRoute()
         if (!route) {
           send(409, { error: 'no model route available; set provider/model in the plugin config' })
           return
         }
         try {
-          const enhanced = await rewriteWithLlm(ctx, route, text, config)
-          send(200, { text: enhanced })
+          const enhanced = await rewriteWithLlm(ctx, route, text, config, level)
+          // 记下指纹：这条文本随后经 submit 进入 pre-step 时不再二次增强。
+          rememberEnhanced(enhanced)
+          send(200, { text: enhanced, level })
         } catch (err) {
           log('error', `composer enhance failed: ${err?.message ?? err}`)
           send(502, { error: 'enhance-failed' })
         }
       },
-    }), 'prompt-enhancer: /api/prompt-enhancer/rewrite')
+    }), 'prompt-enhancer: /api/prompt-enhancer/*')
   })
 }
 

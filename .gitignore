@@ -10,3 +10,6 @@ npm-debug.log*
 .idea/
 .DS_Store
 Thumbs.db
+
+# 配图暂不发布，本地预览用；要发布时删掉这一行
+docs/
