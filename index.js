@@ -231,6 +231,10 @@ async function rewriteWithLlm(ctx, route, raw, config, level, outerSignal) {
   // 成功路径下 aborted 不会被消费，挂空 catch 避免 unhandled rejection。
   void aborted.catch(() => {})
 
+  // 给 dsh-cost 的计量通道打来源标记：增强调用单独归类，费用弹卡里才能
+  // 把「增强」和「对话」分开算。5 秒窗口足够覆盖一次调用的启动。
+  globalThis.__dshPluginCall = { source: 'enhance', at: Date.now() }
+
   const iterator = ctx.llm.stream({
     provider: route.provider,
     model: route.model,

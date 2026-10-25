@@ -2,6 +2,12 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.2.4] - 2026-10-25
+
+### 新增
+
+- 发起增强调用前写 `globalThis.__dshPluginCall = { source: 'enhance', at }`，让 `dsh-cost` 把增强开销单独归类，费用弹卡里能和对话分开看。
+
 ## [0.2.3] - 2026-10-24
 
 ### 修复
