@@ -10,7 +10,7 @@
 
 给 [DeepSeek Harness（dsh）](https://github.com/deepseek-ai/deepseek-harness)做的**对话框提示词增强插件**：你在对话框里随手打一句粗糙的需求，插件在消息真正发给模型之前，先调用一次轻量改写，把它变成一段清晰、具体、自包含的提示词——体验对标 WorkBuddy / ChatGPT 的「提示词增强」。
 
-<!-- 配图待补：docs/panel.png（强度面板截图） -->
+![强度面板](docs/panel.png)
 
 ```
 你输入  →  点发送  →  发送按钮三点旋转  →  [dsh-prompt-enhancer 改写]  →  自动发出增强后的提示词

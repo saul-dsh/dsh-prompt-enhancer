@@ -10,7 +10,7 @@ English | [简体中文](README.md)
 
 A **chat-box prompt auto-enhancement plugin** for [DeepSeek Harness (dsh)](https://github.com/deepseek-ai/deepseek-harness). You type a rough request into the chat box; before the message reaches the model, the plugin makes one lightweight LLM call to rewrite it into a clear, specific, self-contained prompt — the same experience as the prompt enhancer in WorkBuddy / ChatGPT.
 
-<!-- Screenshot pending: docs/panel.png (intensity panel) -->
+![Intensity panel](docs/panel.png)
 
 ```
 your input → press send → send button shows three spinning dots → [rewrite] → enhanced prompt is sent automatically
