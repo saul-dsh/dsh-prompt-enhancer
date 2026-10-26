@@ -35,9 +35,9 @@ window.__ModuleLoader__.load({
     const STYLE_ID = 'dsh-prompt-enhancer-style'
 
     const LEVEL_META = {
-      low: { label: 'Low', grad: 'linear-gradient(90deg,#16a34a,#22c55e)' },
-      high: { label: 'High', grad: 'linear-gradient(90deg,#22c55e,#22d3ee)' },
-      max: { label: 'Max', grad: 'linear-gradient(90deg,#22c55e,#06b6d4,#3b82f6)' },
+      low: { label: 'Low', grad: 'linear-gradient(90deg,#3a83f7,#4f8ef9)' },
+      high: { label: 'High', grad: 'linear-gradient(90deg,#4f8ef9,#6366f1)' },
+      max: { label: 'Max', grad: 'linear-gradient(90deg,#8b5cf6,#6366f1 45%,#3a83f7)' },
     }
 
     // 填充区里从右往左流动的小点。delay 错开形成连续的光流，
