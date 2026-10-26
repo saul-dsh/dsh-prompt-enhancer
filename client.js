@@ -162,12 +162,13 @@ button[data-dsh-pe-busy]::after{
 .dsh-pe-value{font-size:15px;font-weight:500;color:#fff;letter-spacing:.01em}
 .dsh-pe-track{position:relative;height:32px;display:flex;align-items:center;cursor:pointer;touch-action:none}
 .dsh-pe-rail{
-  position:absolute;left:12px;right:12px;height:12px;border-radius:6px;
+  /* 规格对齐 power-picker：28px 高、14px 圆角，两端缩进等于手柄半径 */
+  position:absolute;left:14px;right:14px;height:28px;border-radius:14px;
   background:rgba(255,255,255,.10);
   box-shadow:inset 0 0 0 1px rgba(255,255,255,.05);
 }
 .dsh-pe-fill{
-  position:absolute;left:12px;top:50%;height:12px;border-radius:6px;
+  position:absolute;left:14px;top:50%;height:28px;border-radius:14px 0 0 14px;
   transform:translateY(-50%);overflow:hidden;
   transition:width .18s cubic-bezier(.4,0,.2,1),background .2s ease;
 }
@@ -187,13 +188,15 @@ button[data-dsh-pe-busy]::after{
   background:rgba(255,255,255,.28);transform:translate(-50%,-50%);pointer-events:none;
 }
 .dsh-pe-knob{
-  position:absolute;top:50%;width:22px;height:22px;border-radius:50%;
+  position:absolute;top:50%;width:28px;height:28px;border-radius:50%;
   background:#fff;
-  box-shadow:0 1px 3px rgba(0,0,0,.45),0 0 0 1px rgba(0,0,0,.05);
+  border:0.5px solid rgba(255,255,255,.25);
+  box-shadow:0 0 2px rgba(0,0,0,.1);
   transform:translate(-50%,-50%) scale(1);
   transition:left .18s cubic-bezier(.4,0,.2,1),transform .12s ease;
   pointer-events:none;
 }
+.dsh-pe-track:hover .dsh-pe-knob{transform:translate(-50%,-50%) scale(1.06)}
 .dsh-pe-knob[data-dragging="true"]{
   transition:left 0s,transform .12s ease;
   transform:translate(-50%,-50%) scale(1.12);
@@ -423,10 +426,10 @@ button[data-dsh-pe-busy]::after{
       const meta = LEVEL_META[level] ?? LEVEL_META.high
       // 轨道左右各留 12px 给手柄半径，手柄不会压在轨道圆角外。
       const knobLeft = `calc(${pct}% + ${(12 - pct * 0.24).toFixed(2)}px)`
-      const fillWidth = `calc(${pct}% - ${(pct * 0.24).toFixed(2)}px)`
+      const fillWidth = `calc(${pct}% - ${(pct * 0.28).toFixed(2)}px)`
       const tickLeft = (i) => {
         const p = (i / (LEVELS.length - 1)) * 100
-        return `calc(${p}% + ${(12 - p * 0.24).toFixed(2)}px)`
+        return `calc(${p}% + ${(14 - p * 0.28).toFixed(2)}px)`
       }
 
       return h('div', null,
