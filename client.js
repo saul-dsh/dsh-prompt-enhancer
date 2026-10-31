@@ -711,7 +711,7 @@ button[data-dsh-pe-busy]::after{
         // 排查用：控制台执行 __dshPeDebug.findSendButton() 能直接看到能不能定位到发送按钮。
         if (typeof window !== 'undefined') {
           window.__dshPeDebug = {
-            version: '0.2.2',
+            version: '0.2.6',
             settings,
             live,
             composerRoot,
@@ -723,7 +723,7 @@ button[data-dsh-pe-busy]::after{
             const btn = findSendButton()
             report({
               phase: 'load',
-              version: '0.2.2',
+              version: '0.2.6',
               autoSend: settings.autoSend,
               level: settings.level,
               hasDock: !!document.querySelector('[data-composer-dock]'),
