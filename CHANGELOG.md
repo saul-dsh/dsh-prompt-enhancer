@@ -2,6 +2,18 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.2.9] - 2026-11-01
+
+### 修复：请求期 llm 访问报 "cannot get property \"llm\" without inject"
+
+- 套件宿主不按插件级 inject 并集给顶层作用域授权属性访问（apply 期 tools
+  0.2.8 已实锤一例；本版实锤请求期同款：/rewrite 处理器把外层 ctx 传给
+  rewriteWithLlm，ctx.llm 抛错 → 客户端 502）。修法沿用 followup 模式：
+  webServer 嵌套作用域补声明 `llm` 并改传 `webCtx`；工具 execute 改传所在
+  `['llm','tools']` 作用域；pre-step 路径在嵌套作用域捕获 `llmRef`，未就绪
+  时 fail-open 放行原文。
+- 客户端：增强失败从静默 console 改为按钮短暂红 ✕ + title 带原因，4 秒消退。
+
 ## [0.2.4] - 2026-10-25
 
 ### 新增

@@ -504,6 +504,8 @@ button[data-dsh-pe-busy]::after{
       const [busy, setBusy] = React.useState(false)
       /** 增强后保留原文，草稿没被改动前可以一键撤销。 */
       const [undo, setUndo] = React.useState(null)
+      /** 增强失败的可见反馈：按钮短暂变红 ✕ + title 带原因（console 无声等于没反应）。 */
+      const [errFlash, setErrFlash] = React.useState(null)
       const [state, setState] = React.useState({ ...settings })
       const [open, setOpen] = React.useState(false)
       const [closing, setClosing] = React.useState(false)
@@ -540,6 +542,13 @@ button[data-dsh-pe-busy]::after{
       React.useEffect(() => {
         if (busy) hide()
       }, [busy])
+
+      // 失败提示挂 4 秒自动消退，恢复 ✨ 本貌。
+      React.useEffect(() => {
+        if (!errFlash) return undefined
+        const timer = setTimeout(() => setErrFlash(null), 4000)
+        return () => clearTimeout(timer)
+      }, [errFlash])
 
       const place = () => {
         const el = anchorRef.current
@@ -622,14 +631,18 @@ button[data-dsh-pe-busy]::after{
       const showUndo = undo !== null && !busy && text === undo.enhanced
       const label = busy
         ? '正在增强提示词…'
-        : showUndo
-          ? '撤销增强，恢复原文'
-          : `增强提示词（强度 ${levelLabel}）`
+        : errFlash
+          ? `增强失败：${errFlash}（可重试）`
+          : showUndo
+            ? '撤销增强，恢复原文'
+            : `增强提示词（强度 ${levelLabel}）`
       const icon = busy
         ? h('span', {
           style: { display: 'inline-flex', animation: 'dsh-pe-spin 1s linear infinite' },
         }, h(IconLoadingOutlineRegular, { size: 16 }))
-        : showUndo
+        : errFlash
+          ? h('span', { style: { color: '#ef4444', fontSize: 13, lineHeight: '16px', fontWeight: 700 } }, '✕')
+          : showUndo
           ? h('svg', { width: 16, height: 16, viewBox: '0 0 16 16', 'aria-hidden': true },
             h('path', {
               d: 'M5.5 4.5L2 8l3.5 3.5',
@@ -658,7 +671,7 @@ button[data-dsh-pe-busy]::after{
         style: {
           width: 28, height: 28, padding: 0,
           opacity: empty ? 0.45 : 1,
-          color: showUndo ? '#ef4444' : undefined,
+          color: errFlash || showUndo ? '#ef4444' : undefined,
         },
         onClick: async () => {
           if (busy) return
@@ -677,6 +690,7 @@ button[data-dsh-pe-busy]::after{
             }
           } catch (err) {
             console.error('[dsh-prompt-enhancer] enhance failed', err)
+            setErrFlash(String(err?.message ?? err).replace(/^prompt-enhancer rewrite \d+: ?/, '').slice(0, 80) || '未知错误')
           } finally {
             setBusy(false)
           }
@@ -711,7 +725,7 @@ button[data-dsh-pe-busy]::after{
         // 排查用：控制台执行 __dshPeDebug.findSendButton() 能直接看到能不能定位到发送按钮。
         if (typeof window !== 'undefined') {
           window.__dshPeDebug = {
-            version: '0.2.8',
+            version: '0.2.9',
             settings,
             live,
             composerRoot,
@@ -723,7 +737,7 @@ button[data-dsh-pe-busy]::after{
             const btn = findSendButton()
             report({
               phase: 'load',
-              version: '0.2.8',
+              version: '0.2.9',
               autoSend: settings.autoSend,
               level: settings.level,
               hasDock: !!document.querySelector('[data-composer-dock]'),

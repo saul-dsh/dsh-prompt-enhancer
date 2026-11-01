@@ -401,7 +401,8 @@ export function apply(ctx, config) {
     if (!level || level === 'off') return message
     const route = resolveRoute(agent) ?? lastRoute
     if (!route) return message
-    const enhanced = await rewriteWithLlm(ctx, route, raw.trim(), config, level, signal)
+    if (!llmRef) return message // llm 服务尚未就绪（inject 未解析完）：fail-open 放行原文
+    const enhanced = await rewriteWithLlm({ llm: llmRef }, route, raw.trim(), config, level, signal)
     log('log', `enhanced[${level}] ${raw.trim().length} -> ${enhanced.length} chars`)
     // 用官方工厂重建消息：获得全新稳定 id，source 沿用原消息
     return createUserMessage({
@@ -429,6 +430,13 @@ export function apply(ctx, config) {
     return changed ? out : messages
   }
 
+  // pre-step 自动增强用的 llm 引用：在下方嵌套 inject 作用域里捕获。
+  // 套件宿主不按插件级 inject 并集给顶层作用域授权属性访问——真机 0.3.0：
+  // suite 联合声明了 tools，apply 里 ctx.tools 仍报 cannot get property
+  // without inject；0.3.2 同款实锤蔓延到请求期 ctx.llm（/rewrite 全挂）。
+  // 凡要用的服务，必须写进所在嵌套作用域自己的 inject 数组。
+  let llmRef = null
+
   if (live.enabled) {
     ctx.on('agent/pre-step', async ({ agent, signal }, next) => {
       const decision = await next()
@@ -445,10 +453,10 @@ export function apply(ctx, config) {
     })
 
     // 注册模型可调用的工具：agent 自己也能主动增强某段提示词。
-    // 显式嵌套声明 ['llm','tools']：套件作用域的 inject 解析时机不稳
-    // （真机 0.3.0：suite 联合声明了 tools，enhancer.apply 里仍报
-    // cannot get property "tools" without inject → 整个前缀未注册）。
+    // 显式嵌套声明 ['llm','tools']（原因见上方 llmRef 注释）；顺手捕获
+    // llm 引用，execute 里也不能用外层 ctx（同款报错，见 0.3.2）。
     ctx.inject(['llm', 'tools'], (scope) => {
+      llmRef = scope.llm
       scope.tools.register(defineTool({
         name: 'enhance_prompt',
         description: [
@@ -466,7 +474,7 @@ export function apply(ctx, config) {
           const route = endpointRoute()
           if (!route) throw new Error('No model route available: set provider/model in the plugin config.')
           const level = currentLevel === 'off' ? 'high' : currentLevel
-          const enhanced = await rewriteWithLlm(ctx, route, String(args.prompt ?? '').trim(), config, level, exec?.signal)
+          const enhanced = await rewriteWithLlm(scope, route, String(args.prompt ?? '').trim(), config, level, exec?.signal)
           return enhanced
         },
       }))
@@ -482,7 +490,10 @@ export function apply(ctx, config) {
   /* ------------------------------------------------------------------ */
 
   // 可选注入：CLI / TUI 等没有 webServer 的宿主照常加载，只是没有输入框按钮。
-  ctx.inject(['webServer'], (webCtx) => {
+  // webServer 作用域里请求期要调 llm：必须写进这个嵌套作用域自己的 inject
+  // （真机 0.3.1：/rewrite 里 rewriteWithLlm(ctx) 报 cannot get property
+  // "llm" without inject——顶层并集不授权属性访问，见上方 llmRef 注释）。
+  ctx.inject(['webServer', 'llm'], (webCtx) => {
     webCtx.effect(() => webCtx.webServer.register({
       kind: 'prefix',
       path: '/api/prompt-enhancer',
@@ -590,7 +601,7 @@ export function apply(ctx, config) {
           return
         }
         try {
-          const enhanced = await rewriteWithLlm(ctx, route, text, config, level)
+          const enhanced = await rewriteWithLlm(webCtx, route, text, config, level)
           // 记下指纹：这条文本随后经 submit 进入 pre-step 时不再二次增强。
           rememberEnhanced(enhanced)
           send(200, { text: enhanced, level })
