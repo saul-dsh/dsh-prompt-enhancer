@@ -56,6 +56,7 @@ window.__ModuleLoader__.load({
 
     const PANEL_W = 240
     const PANEL_H = 178
+    const MENU_H = 272
     const HOVER_DELAY = 1500
     const CLOSE_DELAY = 260
     const EXIT_MS = 130
@@ -219,6 +220,11 @@ button[data-dsh-pe-busy]::after{
 }
 .dsh-pe-switch[data-on="true"]::after{transform:translateX(12px)}
 .dsh-pe-desc{margin-top:9px;font-size:10px;color:rgba(255,255,255,.36);line-height:1.45;min-height:15px}
+.dsh-pe-menu{padding:4px}
+.dsh-pe-menu-row{display:flex;align-items:center;justify-content:space-between;gap:12px;height:30px;padding:0 10px;border-radius:6px;font-size:12px;color:rgba(255,255,255,.85);cursor:pointer;white-space:nowrap}
+.dsh-pe-menu-row:hover{background:rgba(255,255,255,.08)}
+.dsh-pe-menu-hint{font-size:10px;color:rgba(255,255,255,.36)}
+.dsh-pe-menu-sep{height:1px;margin:3px 6px;background:rgba(255,255,255,.08)}
 `
       document.head.appendChild(style)
     }
@@ -227,16 +233,27 @@ button[data-dsh-pe-busy]::after{
     /* 网络                                                              */
     /* ---------------------------------------------------------------- */
 
-    async function enhance(text, level) {
+    async function enhance(text, level, action) {
       const res = await fetch(`${ENDPOINT}/rewrite`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ text, level }),
+        body: JSON.stringify({ text, level, ...(action ? { action } : {}) }),
       })
       if (!res.ok) throw new Error(`prompt-enhancer rewrite ${res.status}`)
       const data = await res.json()
       return typeof data?.text === 'string' ? data.text : ''
     }
+
+    /** 草稿变换动作（与增强互斥的两类用法：增强改指令，变换改内容）。 */
+    const TRANSFORMS = [
+      { action: 'toEn', label: '翻译成英文' },
+      { action: 'toZh', label: '翻译成中文' },
+      { action: 'polish', label: '润色' },
+      { action: 'expand', label: '扩写' },
+      { action: 'shorten', label: '缩写' },
+      { action: 'formal', label: '正式语气' },
+      { action: 'casual', label: '口语化' },
+    ]
 
     /** 把拦截决策写进宿主的排查日志，出问题时直接看 ~/.dsh/prompt-enhancer-debug.log。 */
     function report(payload) {
@@ -509,6 +526,8 @@ button[data-dsh-pe-busy]::after{
       const [closing, setClosing] = React.useState(false)
       const [pos, setPos] = React.useState(null)
       const [dragging, setDragging] = React.useState(false)
+      /** 动作菜单：点 ✨ 弹出，增强与草稿变换共用一条结果管线。 */
+      const [menu, setMenu] = React.useState(false)
       const anchorRef = React.useRef(null)
       const trackRef = React.useRef(null)
       const hoverTimer = React.useRef(null)
@@ -618,12 +637,56 @@ button[data-dsh-pe-busy]::after{
         if (next !== state.level) updateSettings({ level: next })
       }
 
+      /** 动作菜单：Esc / 点外关闭。 */
+      React.useEffect(() => {
+        if (!menu) return
+        const onEsc = (ev) => { if (ev.key === 'Escape') setMenu(false) }
+        const onDown = (ev) => {
+          if (anchorRef.current?.contains(ev.target)) return
+          if (ev.target.closest?.('.dsh-pe-menu')) return
+          setMenu(false)
+        }
+        document.addEventListener('keydown', onEsc, true)
+        document.addEventListener('mousedown', onDown, true)
+        return () => {
+          document.removeEventListener('keydown', onEsc, true)
+          document.removeEventListener('mousedown', onDown, true)
+        }
+      }, [menu])
+
+      const placeMenu = () => {
+        const el = anchorRef.current
+        if (!el) return null
+        const r = el.getBoundingClientRect()
+        const left = Math.max(8, Math.min(r.left, (window.innerWidth || 1024) - PANEL_W - 8))
+        const above = r.top - MENU_H - 10
+        return { top: above > 8 ? above : r.bottom + 10, left }
+      }
+
+      /** 菜单动作统一入口：增强与草稿变换共用结果管线与撤销。 */
+      const runAction = async (action) => {
+        if (busy || empty) return
+        setMenu(false)
+        setBusy(true)
+        try {
+          const result = await enhance(text, settings.level, action)
+          if (result.length > 0 && result !== text) {
+            setUndo({ original: text, enhanced: result })
+            inputActions.setDraft(result)
+          }
+        } catch (err) {
+          console.error('[dsh-prompt-enhancer] action failed', err)
+        } finally {
+          setBusy(false)
+        }
+      }
+
       const levelLabel = (LEVEL_META[state.level] ?? LEVEL_META.high).label
       const showUndo = undo !== null && !busy && text === undo.enhanced
       const label = busy
         ? '正在增强提示词…'
         : showUndo
-          ? '撤销增强，恢复原文'
+          ? '撤销，恢复原文'
           : `增强提示词（强度 ${levelLabel}）`
       const icon = busy
         ? h('span', {
@@ -660,7 +723,7 @@ button[data-dsh-pe-busy]::after{
           opacity: empty ? 0.45 : 1,
           color: showUndo ? '#ef4444' : undefined,
         },
-        onClick: async () => {
+        onClick: () => {
           if (busy) return
           if (showUndo) {
             inputActions.setDraft(undo.original)
@@ -668,18 +731,12 @@ button[data-dsh-pe-busy]::after{
             return
           }
           if (empty) return
-          setBusy(true)
-          try {
-            const enhanced = await enhance(text, settings.level)
-            if (enhanced.length > 0 && enhanced !== text) {
-              setUndo({ original: text, enhanced })
-              inputActions.setDraft(enhanced)
-            }
-          } catch (err) {
-            console.error('[dsh-prompt-enhancer] enhance failed', err)
-          } finally {
-            setBusy(false)
+          // 点 ✨ 弹动作菜单（增强 + 草稿变换）；悬浮滑条只管增强的强度。
+          if (!menu) {
+            const p = placeMenu()
+            if (p) setPos(p)
           }
+          setMenu((v) => !v)
         },
       }, icon),
 
@@ -700,6 +757,21 @@ button[data-dsh-pe-busy]::after{
         onChangeLevel: (lv) => updateSettings({ level: lv }),
         onToggleAuto: () => updateSettings({ autoSend: !state.autoSend }),
       })) : null,
+      open && menu && pos ? h('div', {
+        className: 'dsh-pe-panel dsh-pe-menu',
+        style: { top: pos.top, left: pos.left },
+        onMouseDown: (ev) => ev.stopPropagation(),
+      },
+        h('div', { className: 'dsh-pe-menu-row', onClick: () => runAction() },
+          h('span', null, '增强提示词'),
+          h('span', { className: 'dsh-pe-menu-hint' }, `强度 ${levelLabel}`)),
+        h('div', { className: 'dsh-pe-menu-sep' }),
+        ...TRANSFORMS.map((t) => h('div', {
+          key: t.action,
+          className: 'dsh-pe-menu-row',
+          onClick: () => runAction(t.action),
+        }, t.label)),
+      ) : null,
       )
     }
 
@@ -711,7 +783,7 @@ button[data-dsh-pe-busy]::after{
         // 排查用：控制台执行 __dshPeDebug.findSendButton() 能直接看到能不能定位到发送按钮。
         if (typeof window !== 'undefined') {
           window.__dshPeDebug = {
-            version: '0.2.6',
+            version: '0.2.8',
             settings,
             live,
             composerRoot,
@@ -723,7 +795,7 @@ button[data-dsh-pe-busy]::after{
             const btn = findSendButton()
             report({
               phase: 'load',
-              version: '0.2.6',
+              version: '0.2.8',
               autoSend: settings.autoSend,
               level: settings.level,
               hasDock: !!document.querySelector('[data-composer-dock]'),

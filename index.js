@@ -209,8 +209,26 @@ function cleanModelOutput(text) {
   return out
 }
 
-/** 调一次 LLM 做改写；任何失败都抛错，由上层兜底放行。 */
-async function rewriteWithLlm(ctx, route, raw, config, level, outerSignal) {
+/** 草稿变换动作（/rewrite 的 action 参数）：与增强互斥的两类用法——
+ * 增强是"把指令变成更好的指令"，变换是"把内容变成另一种形态的内容"。 */
+const TRANSFORM_TASKS = {
+  toEn: '将以下文本翻译成地道的英文，保留原意、语气与格式',
+  toZh: '将以下文本翻译成通顺自然的中文，保留原意、语气与格式',
+  polish: '在保持原意的前提下润色这段文字：修正语病、提升流畅度与表达质量，不显著改变长度',
+  expand: '在保持原意的前提下扩写这段文字，补充合理的细节与支撑，长度约为原来的 1.5 到 2 倍',
+  shorten: '在保留全部关键信息的前提下精简这段文字，去除冗余表达',
+  formal: '将这段文字改写为正式、专业的语气，保持原意与信息量',
+  casual: '将这段文字改写为轻松自然的口语语气，保持原意与信息量',
+}
+
+function actionPrompt(action, text) {
+  return `你是文字改写助手。任务：${TRANSFORM_TASKS[action]}。\n要求：只输出改写后的文本本身，不要任何解释、前缀、后缀或引号。\n\n原文：\n"""\n${text}\n"""`
+}
+
+/** 调一次 LLM 做改写；任何失败都抛错，由上层兜底放行。
+ * promptOverride 存在时跳过增强元提示、直接用动作模板（草稿变换菜单），
+ * 此时 maxTokens 按原文长度动态给而不是按强度档位。 */
+async function rewriteWithLlm(ctx, route, raw, config, level, outerSignal, promptOverride) {
   const spec = LEVELS[level] ?? LEVELS.high
   // 超时与外部取消（用户中断 pre-step）收敛到同一个内部 signal，
   // 底层流会被及时中断，不会在后台继续烧 token。
@@ -239,8 +257,10 @@ async function rewriteWithLlm(ctx, route, raw, config, level, outerSignal) {
   const iterator = ctx.llm.stream({
     provider: route.provider,
     model: route.model,
-    messages: [{ role: 'user', content: [{ type: 'text', text: buildMetaPrompt(raw, config, level) }] }],
-    maxTokens: spec.maxTokens,
+    messages: [{ role: 'user', content: [{ type: 'text', text: typeof promptOverride === 'string' && promptOverride.trim() ? promptOverride : buildMetaPrompt(raw, config, level) }] }],
+    maxTokens: typeof promptOverride === 'string' && promptOverride.trim()
+      ? Math.min(8000, Math.max(1000, Math.round(raw.length * 2.5)))
+      : spec.maxTokens,
     signal: controller.signal,
   })[Symbol.asyncIterator]()
 
@@ -575,7 +595,9 @@ export function apply(ctx, config) {
         // 单次请求可以覆盖档位（发送拦截路径会带上当前选择），否则用运行时档位。
         const requested = typeof body?.level === 'string' && body.level in LEVELS ? body.level : currentLevel
         const level = requested === 'off' ? null : requested
-        if (!level) {
+        // 草稿变换动作与强度档位无关（翻译不是提示词增强），level-off 不跳过。
+        const action = typeof body?.action === 'string' && body.action in TRANSFORM_TASKS ? body.action : null
+        if (!level && !action) {
           send(200, { text, skipped: 'level-off' })
           return
         }
@@ -585,10 +607,16 @@ export function apply(ctx, config) {
           return
         }
         try {
-          const enhanced = await rewriteWithLlm(ctx, route, text, config, level)
-          // 记下指纹：这条文本随后经 submit 进入 pre-step 时不再二次增强。
-          rememberEnhanced(enhanced)
-          send(200, { text: enhanced, level })
+          const result = await rewriteWithLlm(
+            ctx, route, text, config,
+            level ?? 'high',
+            undefined,
+            action ? actionPrompt(action, text) : undefined,
+          )
+          // 记下指纹：这条文本随后经 submit 进入 pre-step 时不再二次增强
+          // （变换结果也一样——翻译稿不该被自动增强成提示词）。
+          rememberEnhanced(result)
+          send(200, { text: result, level, ...(action ? { action } : {}) })
         } catch (err) {
           log('error', `composer enhance failed: ${err?.message ?? err}`)
           send(502, { error: 'enhance-failed' })
