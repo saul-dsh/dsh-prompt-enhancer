@@ -206,9 +206,15 @@ button[data-dsh-pe-busy]::after{
 .dsh-pe-legend span{font-size:11px;color:rgba(255,255,255,.36);cursor:pointer;transition:color .15s}
 .dsh-pe-legend span[data-active="true"]{color:#fff;font-weight:500}
 .dsh-pe-legend span:hover{color:rgba(255,255,255,.75)}
-.dsh-pe-sep{height:1px;margin:13px 0 11px;background:rgba(255,255,255,.08)}
-.dsh-pe-row{display:flex;align-items:center;justify-content:space-between;cursor:pointer;padding:1px 0}
-.dsh-pe-row-label{font-size:11px;color:rgba(255,255,255,.80)}
+.dsh-pe-sep{height:1px;margin:13px 0 9px;background:rgba(255,255,255,.08)}
+.dsh-pe-row{
+  display:flex;align-items:center;justify-content:space-between;cursor:pointer;
+  padding:4px 6px;margin:0 -6px;border-radius:6px;
+  transition:background .14s ease;
+}
+.dsh-pe-row:hover{background:rgba(255,255,255,.06)}
+.dsh-pe-row:hover .dsh-pe-row-label{color:#fff}
+.dsh-pe-row-label{font-size:11px;color:rgba(255,255,255,.80);transition:color .14s ease}
 .dsh-pe-switch{
   position:relative;width:28px;height:16px;border-radius:8px;
   background:rgba(255,255,255,.14);transition:background .18s;
@@ -219,7 +225,6 @@ button[data-dsh-pe-busy]::after{
   background:#fff;transition:transform .18s cubic-bezier(.4,0,.2,1);
 }
 .dsh-pe-switch[data-on="true"]::after{transform:translateX(12px)}
-.dsh-pe-desc{margin-top:9px;font-size:10px;color:rgba(255,255,255,.36);line-height:1.45;min-height:15px}
 `
       document.head.appendChild(style)
     }
@@ -482,21 +487,27 @@ button[data-dsh-pe-busy]::after{
           ...LEVELS.map((lv) => h('span', {
             key: lv,
             'data-active': String(level === lv),
+            title: LEVEL_DESC[lv],
             onClick: () => onChangeLevel(lv),
           }, LEVEL_META[lv].label)),
         ),
         h('div', { className: 'dsh-pe-sep' }),
-        h('div', { className: 'dsh-pe-row', onClick: onToggleAuto },
+        h('div', {
+          className: 'dsh-pe-row',
+          title: '开启后每条消息发送前自动增强（强度用上面的滑条调）',
+          onClick: onToggleAuto,
+        },
           h('span', { className: 'dsh-pe-row-label' }, '发送时自动增强'),
           h('span', { className: 'dsh-pe-switch', 'data-on': String(autoSend) }),
         ),
-        h('div', { className: 'dsh-pe-row', onClick: onToggleContext },
+        h('div', {
+          className: 'dsh-pe-row',
+          title: '增强时结合最近一轮对话，消解「它 / 这个 / 上面提到的」等指代',
+          onClick: onToggleContext,
+        },
           h('span', { className: 'dsh-pe-row-label' }, '参考会话上下文'),
           h('span', { className: 'dsh-pe-switch', 'data-on': String(useContext) }),
         ),
-        h('div', { className: 'dsh-pe-desc' }, autoSend
-          ? LEVEL_DESC[level]
-          : '仅手动增强，发送不拦截'),
       )
     }
 
