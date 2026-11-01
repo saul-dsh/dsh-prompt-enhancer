@@ -65,7 +65,7 @@ window.__ModuleLoader__.load({
     /* ---------------------------------------------------------------- */
 
     const settings = (() => {
-      const fallback = { level: 'high', autoSend: false }
+      const fallback = { level: 'high', autoSend: false, useContext: false }
       try {
         const raw = localStorage.getItem(STORAGE_KEY)
         if (!raw) return fallback
@@ -75,6 +75,7 @@ window.__ModuleLoader__.load({
           // 旧版本存过 off，迁移成 high。
           level: LEVELS.includes(parsed?.level) ? parsed.level : fallback.level,
           autoSend: typeof parsed?.autoSend === 'boolean' ? parsed.autoSend : fallback.autoSend,
+          useContext: typeof parsed?.useContext === 'boolean' ? parsed.useContext : fallback.useContext,
         }
       } catch {
         return fallback
@@ -98,12 +99,12 @@ window.__ModuleLoader__.load({
       Object.assign(settings, patch)
       try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...settings, v: STORAGE_VERSION })) } catch { /* ignore */ }
       notifySettings()
-      // 同步给服务端：pre-step 兜底增强要用同一档位。
-      if (patch.level !== undefined) {
+      // 同步给服务端：pre-step 兜底增强要用同一档位，上下文开关同源。
+      if (patch.level !== undefined || patch.useContext !== undefined) {
         fetch(`${ENDPOINT}/settings`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ level: settings.level }),
+          body: JSON.stringify({ level: settings.level, useContext: settings.useContext }),
         }).catch(() => { /* 端点不可达时不影响前端增强 */ })
       }
     }
@@ -227,11 +228,11 @@ button[data-dsh-pe-busy]::after{
     /* 网络                                                              */
     /* ---------------------------------------------------------------- */
 
-    async function enhance(text, level) {
+    async function enhance(text, level, sessionId) {
       const res = await fetch(`${ENDPOINT}/rewrite`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ text, level }),
+        body: JSON.stringify({ text, level, sessionId }),
       })
       if (!res.ok) throw new Error(`prompt-enhancer rewrite ${res.status}`)
       const data = await res.json()
@@ -420,7 +421,7 @@ button[data-dsh-pe-busy]::after{
       max: '第一性原理重构，假设逐条标注',
     }
 
-    function LevelPanel({ level, autoSend, dragging, trackRef, onPick, onDragEnd, onChangeLevel, onToggleAuto }) {
+    function LevelPanel({ level, autoSend, useContext, dragging, trackRef, onPick, onDragEnd, onChangeLevel, onToggleAuto, onToggleContext }) {
       const index = Math.max(0, LEVELS.indexOf(level))
       const pct = (index / (LEVELS.length - 1)) * 100
       const meta = LEVEL_META[level] ?? LEVEL_META.high
@@ -489,6 +490,10 @@ button[data-dsh-pe-busy]::after{
           h('span', { className: 'dsh-pe-row-label' }, '发送时自动增强'),
           h('span', { className: 'dsh-pe-switch', 'data-on': String(autoSend) }),
         ),
+        h('div', { className: 'dsh-pe-row', onClick: onToggleContext },
+          h('span', { className: 'dsh-pe-row-label' }, '参考会话上下文'),
+          h('span', { className: 'dsh-pe-switch', 'data-on': String(useContext) }),
+        ),
         h('div', { className: 'dsh-pe-desc' }, autoSend
           ? LEVEL_DESC[level]
           : '仅手动增强，发送不拦截'),
@@ -499,7 +504,7 @@ button[data-dsh-pe-busy]::after{
     /* 组件：增强按钮 + 悬浮强度面板                                       */
     /* ---------------------------------------------------------------- */
 
-    function EnhanceButton({ useInput, inputActions }) {
+    function EnhanceButton({ useInput, inputActions, sessionId }) {
       const draft = useInput((s) => s.draft)
       const [busy, setBusy] = React.useState(false)
       /** 增强后保留原文，草稿没被改动前可以一键撤销。 */
@@ -683,7 +688,7 @@ button[data-dsh-pe-busy]::after{
           if (empty) return
           setBusy(true)
           try {
-            const enhanced = await enhance(text, settings.level)
+            const enhanced = await enhance(text, settings.level, sessionId)
             if (enhanced.length > 0 && enhanced !== text) {
               setUndo({ original: text, enhanced })
               inputActions.setDraft(enhanced)
@@ -707,12 +712,14 @@ button[data-dsh-pe-busy]::after{
       }, h(LevelPanel, {
         level: state.level,
         autoSend: state.autoSend,
+        useContext: state.useContext,
         dragging,
         trackRef,
         onPick: pick,
         onDragEnd: () => setDragging(false),
         onChangeLevel: (lv) => updateSettings({ level: lv }),
         onToggleAuto: () => updateSettings({ autoSend: !state.autoSend }),
+        onToggleContext: () => updateSettings({ useContext: !state.useContext }),
       })) : null,
       )
     }

@@ -2,6 +2,17 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.3.0] - 2026-11-01
+
+### 参考会话上下文（对标市场 dsh-prompt-rewriter 205★ 的差异点）
+
+- 面板新增「参考会话上下文」开关（默认关，随档位持久化并同步服务端）。
+- 打开后：llm/stream 全局捕获每会话最近一轮（用户+助手文本，10 分钟 TTL，
+  上限 24 会话；AsyncLocalStorage 深度标记防自家改写调用被误缓存），
+  ✨ 增强请求带 sessionId，服务端把该轮拼进 meta prompt 的 <context> 段，
+  仅用于消解指代（它/这个/上面提到的）、贴合当前讨论，绝不据此发明需求。
+- 输入框按钮路径生效；pre-step 兜底与工具路径不取上下文（无会话归属）。
+
 ## [0.2.9] - 2026-11-01
 
 ### 修复：请求期 llm 访问报 "cannot get property \"llm\" without inject"
