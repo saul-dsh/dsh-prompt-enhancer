@@ -25,6 +25,7 @@ import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import Schema from '@deepseek-ai/schemastery'
 import { appendFile, mkdir } from 'node:fs/promises'
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 
@@ -287,6 +288,34 @@ async function rewriteWithLlm(ctx, route, raw, config, level, outerSignal) {
 /* ------------------------------------------------------------------ */
 
 export function apply(ctx, config) {
+  // 运行时可变副本：POST /settings 改这里，立即生效；显式改过的键持久化
+  // 到 storages、启动时回放（没改过的键继续跟随宿主配置）。
+  const live = { ...config }
+
+  // 设置持久化：只落与 config 不同的键，防抖 400ms 原子写。必须先回放
+  // 再初始化 currentLevel，重启后上次的强度档位才生效。
+  const SETTINGS_KEYS = ['level', 'mode', 'preStepAuto', 'language', 'styleHint', 'timeoutMs', 'minPromptLength', 'maxInputChars']
+  const SETTINGS_PATH = join(homedir(), '.dsh', 'storages', 'prompt-enhancer', 'settings.json')
+  try {
+    const saved = JSON.parse(readFileSync(SETTINGS_PATH, 'utf8'))
+    for (const key of SETTINGS_KEYS) if (saved?.[key] !== undefined) live[key] = saved[key]
+  } catch { /* 无存档：全部跟随配置 */ }
+  let settingsTimer = null
+  const persistSettings = () => {
+    if (settingsTimer) return
+    settingsTimer = setTimeout(() => {
+      settingsTimer = null
+      try {
+        mkdirSync(dirname(SETTINGS_PATH), { recursive: true })
+        const out = {}
+        for (const key of SETTINGS_KEYS) if (live[key] !== config[key]) out[key] = live[key]
+        const tmp = `${SETTINGS_PATH}.tmp`
+        writeFileSync(tmp, JSON.stringify(out, null, 2))
+        renameSync(tmp, SETTINGS_PATH)
+      } catch { /* ignore */ }
+    }, 400)
+  }
+
   const log = (level, msg) => console[level === 'error' ? 'error' : 'log'](`[dsh-prompt-enhancer] ${msg}`)
 
   /** 最近一次见到的会话路由，供 enhance_prompt 工具和 web 端点在没有显式配置时复用。 */
@@ -296,7 +325,7 @@ export function apply(ctx, config) {
    * 运行时增强强度。前端选择器通过 /api/prompt-enhancer/settings 改这里，
    * 让 pre-step 与手动按钮共用同一档位。初始值来自配置。
    */
-  let currentLevel = Object.prototype.hasOwnProperty.call(LEVELS, config.level) ? config.level : 'high'
+  let currentLevel = Object.prototype.hasOwnProperty.call(LEVELS, live.level) ? live.level : 'high'
 
   /**
    * 前端刚增强过的文本指纹。发送拦截路径增强完再 submit 时，pre-step 会再看到
@@ -340,7 +369,7 @@ export function apply(ctx, config) {
 
   /** 配置里显式指定的路由。 */
   function configRoute() {
-    return config.provider && config.model ? { provider: config.provider, model: config.model } : null
+    return live.provider && live.model ? { provider: live.provider, model: live.model } : null
   }
 
   function resolveRoute(agent) {
@@ -400,15 +429,15 @@ export function apply(ctx, config) {
     return changed ? out : messages
   }
 
-  if (config.enabled) {
+  if (live.enabled) {
     ctx.on('agent/pre-step', async ({ agent, signal }, next) => {
       const decision = await next()
       if (decision.kind !== 'enter') return decision
       const route = resolveRoute(agent)
       if (route) lastRoute = route
-      if (config.mode !== 'auto') return decision
+      if (live.mode !== 'auto') return decision
       // 前端拦截发送并自行增强时，这里不再二次增强（否则同一句话被改两遍）。
-      if (!config.preStepAuto) return decision
+      if (!live.preStepAuto) return decision
       const messages = await enhanceBatch(decision.messages, agent, signal)
       if (messages === decision.messages) return decision
       // spread 保留未来新增的 decision 字段
@@ -438,7 +467,7 @@ export function apply(ctx, config) {
       },
     }))
 
-    log('log', `loaded (mode=${config.mode}, timeout=${config.timeoutMs}ms)`)
+    log('log', `loaded (mode=${live.mode}, timeout=${live.timeoutMs}ms)`)
   } else {
     log('log', 'loaded but disabled by config')
   }
@@ -462,7 +491,7 @@ export function apply(ctx, config) {
 
         // 前端初始化：读当前档位，避免刷新后选择器回落到默认值。
         if (path === '/settings' && req.method === 'GET') {
-          send(200, { level: currentLevel, levels: Object.keys(LEVELS) })
+          send(200, { ...live, level: currentLevel, levels: Object.keys(LEVELS) })
           return
         }
 
@@ -477,14 +506,28 @@ export function apply(ctx, config) {
             send(400, { error: 'invalid-json' })
             return
           }
-          const next = body?.level
-          if (typeof next !== 'string' || !(next in LEVELS)) {
-            send(400, { error: `level must be one of ${Object.keys(LEVELS).join('/')}` })
-            return
+          // level 是运行时主开关，必须合法；其余字段宽松校验后写入 live。
+          if (body?.level !== undefined) {
+            const next = body.level
+            if (typeof next !== 'string' || !(next in LEVELS)) {
+              send(400, { error: `level must be one of ${Object.keys(LEVELS).join('/')}` })
+              return
+            }
+            currentLevel = next
+            live.level = next
+            log('log', `level -> ${next}`)
           }
-          currentLevel = next
-          log('log', `level -> ${next}`)
-          send(200, { level: currentLevel })
+          if (body?.mode === 'auto' || body?.mode === 'manual') live.mode = body.mode
+          if (body?.preStepAuto !== undefined) live.preStepAuto = body.preStepAuto === true
+          if (body?.language === 'auto' || body?.language === 'zh' || body?.language === 'en') live.language = body.language
+          if (typeof body?.styleHint === 'string') live.styleHint = body.styleHint.slice(0, 500)
+          for (const [key, min, max] of [['timeoutMs', 1000, 120000], ['minPromptLength', 1, 200], ['maxInputChars', 100, 100000]]) {
+            if (body?.[key] === undefined) continue
+            const value = Number(body[key])
+            if (Number.isFinite(value)) live[key] = Math.min(max, Math.max(min, Math.round(value)))
+          }
+          persistSettings()
+          send(200, { ...live, level: currentLevel })
           return
         }
 
@@ -525,8 +568,8 @@ export function apply(ctx, config) {
           send(400, { error: 'text must be a non-empty string' })
           return
         }
-        if (text.length > config.maxInputChars) {
-          send(413, { error: `text exceeds ${config.maxInputChars} chars` })
+        if (text.length > live.maxInputChars) {
+          send(413, { error: `text exceeds ${live.maxInputChars} chars` })
           return
         }
         // 单次请求可以覆盖档位（发送拦截路径会带上当前选择），否则用运行时档位。
