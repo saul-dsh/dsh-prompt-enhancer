@@ -464,28 +464,33 @@ export function apply(ctx, config) {
       return { ...decision, messages }
     })
 
-    // 注册模型可调用的工具：agent 自己也能主动增强某段提示词
-    ctx.tools.register(defineTool({
-      name: 'enhance_prompt',
-      description: [
-        'Rewrite a rough user prompt into a clear, specific, self-contained prompt before using it.',
-        'Use it when the user asks to improve/expand their prompt, or before re-running a vague earlier request.',
-      ].join(' '),
-      parameters: {
-        prompt: { type: 'string', required: true, description: 'The raw prompt text to enhance' },
-      },
-      output: {
-        schema: { type: 'string' },
-        render: (_args, value) => [{ type: 'text', text: value }],
-      },
-      async execute(args, exec) {
-        const route = endpointRoute()
-        if (!route) throw new Error('No model route available: set provider/model in the plugin config.')
-        const level = currentLevel === 'off' ? 'high' : currentLevel
-        const enhanced = await rewriteWithLlm(ctx, route, String(args.prompt ?? '').trim(), config, level, exec?.signal)
-        return enhanced
-      },
-    }))
+    // 注册模型可调用的工具：agent 自己也能主动增强某段提示词。
+    // 显式嵌套声明 ['llm','tools']：套件作用域的 inject 解析时机不稳
+    // （真机 0.3.0：suite 联合声明了 tools，enhancer.apply 里仍报
+    // cannot get property "tools" without inject → 整个前缀未注册）。
+    ctx.inject(['llm', 'tools'], (scope) => {
+      scope.tools.register(defineTool({
+        name: 'enhance_prompt',
+        description: [
+          'Rewrite a rough user prompt into a clear, specific, self-contained prompt before using it.',
+          'Use it when the user asks to improve/expand their prompt, or before re-running a vague earlier request.',
+        ].join(' '),
+        parameters: {
+          prompt: { type: 'string', required: true, description: 'The raw prompt text to enhance' },
+        },
+        output: {
+          schema: { type: 'string' },
+          render: (_args, value) => [{ type: 'text', text: value }],
+        },
+        async execute(args, exec) {
+          const route = endpointRoute()
+          if (!route) throw new Error('No model route available: set provider/model in the plugin config.')
+          const level = currentLevel === 'off' ? 'high' : currentLevel
+          const enhanced = await rewriteWithLlm(ctx, route, String(args.prompt ?? '').trim(), config, level, exec?.signal)
+          return enhanced
+        },
+      }))
+    })
 
     log('log', `loaded (mode=${live.mode}, timeout=${live.timeoutMs}ms)`)
   } else {
