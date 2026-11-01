@@ -225,6 +225,7 @@ button[data-dsh-pe-busy]::after{
 .dsh-pe-menu-row:hover{background:rgba(255,255,255,.08)}
 .dsh-pe-menu-hint{font-size:10px;color:rgba(255,255,255,.36)}
 .dsh-pe-menu-sep{height:1px;margin:3px 6px;background:rgba(255,255,255,.08)}
+.dsh-pe-menu-error{margin:4px 8px 2px;padding:5px 8px;border-radius:5px;font-size:11px;line-height:1.4;color:#fca5a5;background:rgba(239,68,68,.12)}
 `
       document.head.appendChild(style)
     }
@@ -528,6 +529,7 @@ button[data-dsh-pe-busy]::after{
       const [dragging, setDragging] = React.useState(false)
       /** 动作菜单：点 ✨ 弹出，增强与草稿变换共用一条结果管线。 */
       const [menu, setMenu] = React.useState(false)
+      const [actionError, setActionError] = React.useState(null)
       const anchorRef = React.useRef(null)
       const trackRef = React.useRef(null)
       const hoverTimer = React.useRef(null)
@@ -640,8 +642,9 @@ button[data-dsh-pe-busy]::after{
       /** 动作菜单：Esc / 点外关闭。 */
       React.useEffect(() => {
         if (!menu) return
-        const onEsc = (ev) => { if (ev.key === 'Escape') setMenu(false) }
+        const onEsc = (ev) => { if (ev.key === 'Escape' && !busy) setMenu(false) }
         const onDown = (ev) => {
+          if (busy) return
           if (anchorRef.current?.contains(ev.target)) return
           if (ev.target.closest?.('.dsh-pe-menu')) return
           setMenu(false)
@@ -652,7 +655,7 @@ button[data-dsh-pe-busy]::after{
           document.removeEventListener('keydown', onEsc, true)
           document.removeEventListener('mousedown', onDown, true)
         }
-      }, [menu])
+      }, [menu, busy])
 
       const placeMenu = () => {
         const el = anchorRef.current
@@ -663,21 +666,26 @@ button[data-dsh-pe-busy]::after{
         return { top: above > 8 ? above : r.bottom + 10, left }
       }
 
-      /** 菜单动作统一入口：增强与草稿变换共用结果管线与撤销。 */
+      /** 动作菜单统一入口：菜单保持打开显示 busy/错误，成功才收起写回草稿。 */
       const runAction = async (action) => {
         if (busy || empty) return
-        setMenu(false)
-        setBusy(true)
+        const busyKey = action ?? 'enhance'
+        setActionError(null)
+        setBusy(busyKey)
         try {
           const result = await enhance(text, settings.level, action)
           if (result.length > 0 && result !== text) {
             setUndo({ original: text, enhanced: result })
             inputActions.setDraft(result)
+            setMenu(false)
+          } else {
+            setActionError('模型没有返回有效内容，换个模型或稍后再试')
           }
         } catch (err) {
           console.error('[dsh-prompt-enhancer] action failed', err)
+          setActionError(`改写失败：${String(err?.message ?? err).slice(0, 80)}`)
         } finally {
-          setBusy(false)
+          setBusy(null)
         }
       }
 
@@ -763,14 +771,16 @@ button[data-dsh-pe-busy]::after{
         onMouseDown: (ev) => ev.stopPropagation(),
       },
         h('div', { className: 'dsh-pe-menu-row', onClick: () => runAction() },
-          h('span', null, '增强提示词'),
-          h('span', { className: 'dsh-pe-menu-hint' }, `强度 ${levelLabel}`)),
+          h('span', null, busy === 'enhance' ? '增强中…' : '增强提示词'),
+          h('span', { className: 'dsh-pe-menu-hint' }, busy === 'enhance' ? null : `强度 ${levelLabel}`)),
         h('div', { className: 'dsh-pe-menu-sep' }),
         ...TRANSFORMS.map((t) => h('div', {
           key: t.action,
           className: 'dsh-pe-menu-row',
+          style: busy === t.action ? { opacity: 0.55 } : undefined,
           onClick: () => runAction(t.action),
-        }, t.label)),
+        }, busy === t.action ? `${t.label}中…` : t.label)),
+        actionError ? h('div', { className: 'dsh-pe-menu-error' }, actionError) : null,
       ) : null,
       )
     }

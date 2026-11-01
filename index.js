@@ -619,6 +619,11 @@ export function apply(ctx, config) {
           send(200, { text: result, level, ...(action ? { action } : {}) })
         } catch (err) {
           log('error', `composer enhance failed: ${err?.message ?? err}`)
+          // 落盘：服务端错误只进 console 等于没有（排障教训）。
+          try {
+            await mkdir(dirname(DEBUG_LOG), { recursive: true })
+            await appendFile(DEBUG_LOG, `${new Date().toISOString()} ${JSON.stringify({ phase: 'rewrite-error', action: body?.action ?? 'enhance', error: String(err?.message ?? err).slice(0, 200) })}\n`, 'utf8')
+          } catch { /* ignore */ }
           send(502, { error: 'enhance-failed' })
         }
       },
